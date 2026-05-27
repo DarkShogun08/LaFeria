@@ -3,15 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>La Feria - Llamadas Locales</title>
+  <title>La Feria - WebRTC Manual</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-
-  <div class="screen" id="menuScreen">
+  <main class="screen" id="menuScreen">
     <div class="menu-canopy" aria-hidden="true"></div>
 
-    <div class="menu-center">
+    <section class="menu-center">
       <div class="logo-wrap">
         <div class="logo">
           <span class="logo-script">la</span>
@@ -22,7 +21,7 @@
       </div>
 
       <div class="card">
-        <div class="profile-badge" id="profileBadge">
+        <div class="profile-badge">
           <div class="avatar" id="avatarDisplay">?</div>
           <div class="profile-name">
             <span id="profileNameDisplay">Sin nombre</span>
@@ -30,224 +29,182 @@
           </div>
         </div>
 
-        <button class="menu-btn" onclick="goTo('profileScreen')">
-          <span class="icon">👤</span>
-          <span class="label">Añadir/Cambiar nombre de tu perfil</span>
-          <span class="num">1</span>
+        <button class="menu-btn" type="button" onclick="showScreen('profileScreen')">
+          <span class="icon" aria-hidden="true">1</span>
+          <span class="label">Anadir/Cambiar nombre de perfil</span>
         </button>
-        <button class="menu-btn" onclick="goTo('createScreen')">
-          <span class="icon">🔐</span>
+        <button class="menu-btn" type="button" onclick="showScreen('createScreen')">
+          <span class="icon" aria-hidden="true">2</span>
           <span class="label">Crear llamada</span>
-          <span class="num">2</span>
         </button>
-        <button class="menu-btn" onclick="goTo('joinScreen')">
-          <span class="icon">🚪</span>
+        <button class="menu-btn" type="button" onclick="showScreen('joinScreen')">
+          <span class="icon" aria-hidden="true">3</span>
           <span class="label">Unirse a llamada</span>
-          <span class="num">3</span>
         </button>
       </div>
-    </div>
-  </div>
+    </section>
+  </main>
 
-  <div class="screen hidden" id="profileScreen">
+  <section class="screen hidden" id="profileScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" onclick="goTo('menuScreen')">←</button>
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
         EDITAR PERFIL
       </div>
       <div class="form-group">
         <label for="profileInput">Nombre de usuario</label>
-        <input type="text" id="profileInput" placeholder="ej: CyberUser_42" maxlength="24">
+        <input type="text" id="profileInput" placeholder="ej: Ana" maxlength="24">
       </div>
       <div class="btn-row">
-        <button class="btn btn-ghost" onclick="goTo('menuScreen')">Cancelar</button>
-        <button class="btn btn-primary" onclick="saveProfile()">Guardar</button>
+        <button class="btn btn-ghost" type="button" onclick="showScreen('menuScreen')">Cancelar</button>
+        <button class="btn btn-primary" type="button" onclick="saveProfile()">Guardar</button>
       </div>
       <div class="msg" id="profileMsg"></div>
     </div>
-  </div>
+  </section>
 
-  <div class="screen hidden" id="createScreen">
+  <section class="screen hidden" id="createScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" onclick="goTo('menuScreen')">←</button>
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
         CREAR LLAMADA
       </div>
       <p class="join-hint">
-        Se generara una sala corta y un enlace local para compartir con la otra persona.
+        Modo manual compatible con GitHub Pages. No usa servidor ni APIs externas de pago.
+        Para conectar, ambos usuarios deben copiar y pegar los codigos de conexion.
       </p>
-      <button class="btn btn-primary btn-full" onclick="createRoom()">Crear llamada</button>
-      <div class="created-room-panel hidden" id="createdRoomPanel">
-        <span>Llamada creada. Comparte este enlace con la otra persona.</span>
-        <strong id="createdRoomCode">----</strong>
-        <div class="share-link" id="createdRoomLink"></div>
-        <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyRoomLink()">Copiar enlace</button>
+
+      <label class="option-row" for="usePublicStun">
+        <input id="usePublicStun" type="checkbox" checked>
+        <span>
+          Usar STUN publico para mejorar la conexion entre redes.
+          STUN no crea salas ni sustituye estos codigos.
+        </span>
+      </label>
+
+      <div class="steps-box">
+        <strong>Para quien crea la llamada</strong>
+        <span>Paso 1: pulsa crear llamada.</span>
+        <span>Paso 2: copia el codigo de oferta y mandaselo a la otra persona.</span>
+        <span>Paso 3: pega aqui la respuesta que te devuelvan.</span>
+        <span>Paso 4: pulsa conectar.</span>
       </div>
+
+      <button class="btn btn-primary btn-full" type="button" onclick="createManualOffer()">Crear llamada</button>
       <div class="msg" id="createMsg"></div>
     </div>
-  </div>
+  </section>
 
-  <div class="screen hidden" id="joinScreen">
+  <section class="screen hidden" id="joinScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" onclick="goTo('menuScreen')">←</button>
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
         UNIRSE A LLAMADA
       </div>
       <p class="join-hint">
-        Escribe el codigo corto de sala o abre directamente un enlace con ?room=A7K9.
+        Pega el codigo de oferta que te envio la otra persona. La app generara una respuesta para devolversela.
       </p>
+
+      <div class="steps-box">
+        <strong>Para quien se une</strong>
+        <span>Paso 1: pega el codigo que te mandaron.</span>
+        <span>Paso 2: genera la respuesta.</span>
+        <span>Paso 3: copia la respuesta y devuelvesela al creador.</span>
+      </div>
+
       <div class="form-group">
-        <label for="joinRoomCode">Codigo de sala</label>
-        <input type="text" id="joinRoomCode" placeholder="A7K9" maxlength="8"
-               oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"
-               onkeydown="if(event.key==='Enter') joinRoom()">
+        <label for="manualReceivedCode">Codigo de oferta recibido</label>
+        <textarea id="manualReceivedCode" class="signal-code" placeholder="Pega aqui el codigo de oferta"></textarea>
       </div>
       <div class="btn-row">
-        <button class="btn btn-ghost" onclick="goTo('menuScreen')">Cancelar</button>
-        <button class="btn btn-primary" onclick="joinRoom()">Unirse</button>
+        <button class="btn btn-ghost" type="button" onclick="pasteCode('manualReceivedCode')">Pegar</button>
+        <button class="btn btn-primary" type="button" onclick="generateManualAnswer()">Generar respuesta</button>
       </div>
       <div class="msg" id="joinMsg"></div>
     </div>
-  </div>
+  </section>
 
-  <div class="perm-overlay hidden" id="permOverlay">
-    <div class="perm-card">
-      <div class="perm-icon">🎥</div>
-      <div class="perm-title">Cámara, micrófono y cascos</div>
-      <p class="perm-desc">
-        Selecciona los dispositivos que quieres usar.
-        <strong>Todo el procesamiento es local</strong>: no se usan APIs externas.
-      </p>
-
-      <div class="device-selectors">
-        <div class="form-group">
-          <label for="selectCam">🎥 Cámara</label>
-          <select id="selectCam"></select>
-        </div>
-        <div class="form-group">
-          <label for="selectMic">🎙 Micrófono</label>
-          <select id="selectMic"></select>
-        </div>
-        <div class="form-group">
-          <label for="selectHeadphones">🎧 Cascos / salida</label>
-          <select id="selectHeadphones"></select>
-        </div>
-      </div>
-
-      <button class="btn btn-primary btn-full" onclick="requestPermissions()">
-        Conceder permisos y entrar
-      </button>
-      <button class="btn btn-ghost btn-full btn-sm" onclick="skipPermissions()">
-        Continuar sin cámara/micrófono
-      </button>
-      <div class="msg" id="permMsg"></div>
-    </div>
-  </div>
-
-  <div class="screen hidden" id="roomScreen">
+  <section class="screen hidden" id="roomScreen">
     <div class="call-stage">
-      <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuración de llamada" aria-expanded="false" onclick="toggleSettingsPanel()">
-        <span aria-hidden="true">⚙</span>
-      </button>
+      <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">⚙</button>
 
-      <aside class="settings-panel hidden" id="settingsPanel" aria-label="Configuración de llamada">
+      <aside class="settings-panel hidden" id="settingsPanel" aria-label="Configuracion de llamada">
         <div class="settings-header">
           <div>
             <span class="settings-kicker">Cabina de control</span>
-            <h2>Ajustes de llamada</h2>
+            <h2>Ajustes</h2>
           </div>
-          <button class="settings-close" type="button" aria-label="Cerrar configuración" onclick="closeSettingsPanel()">×</button>
+          <button class="settings-close" type="button" aria-label="Cerrar configuracion" onclick="closeSettingsPanel()">×</button>
         </div>
 
         <div class="settings-section">
-          <button class="settings-action" id="btnMic" type="button" onclick="toggleMic()">
-            <span class="settings-icon" id="micIcon" aria-hidden="true">🎙</span>
+          <button class="settings-action active" id="btnMic" type="button" onclick="toggleMic()">
+            <span class="settings-icon" aria-hidden="true">MIC</span>
             <span>
               <strong id="micLabel">Micro activo</strong>
-              <small id="micStateText">Tu voz se está enviando</small>
+              <small>Activa o silencia tu microfono.</small>
             </span>
           </button>
 
-          <button class="settings-action" id="btnCam" type="button" onclick="toggleCam()">
-            <span class="settings-icon" id="camIcon" aria-hidden="true">📷</span>
+          <button class="settings-action active" id="btnCam" type="button" onclick="toggleCam()">
+            <span class="settings-icon" aria-hidden="true">CAM</span>
             <span>
-              <strong id="camLabel">Cámara activa</strong>
-              <small id="camStateText">Tu vídeo se está enviando</small>
-            </span>
-          </button>
-
-          <button class="settings-action" id="btnDeafen" type="button" onclick="toggleRemoteAudio()">
-            <span class="settings-icon" id="deafenIcon" aria-hidden="true">🎧</span>
-            <span>
-              <strong id="deafenLabel">Audio recibido activo</strong>
-              <small id="deafenStateText">Estás escuchando la llamada</small>
-            </span>
-          </button>
-
-          <button class="settings-action" id="btnMicMonitor" type="button" onclick="toggleMicMonitor()">
-            <span class="settings-icon" id="micMonitorIcon" aria-hidden="true">◉</span>
-            <span>
-              <strong id="micMonitorLabel">Probar micrófono</strong>
-              <small id="micMonitorStateText">Escúchate solo en tus cascos</small>
+              <strong id="camLabel">Camara activa</strong>
+              <small>Activa o apaga tu camara.</small>
             </span>
           </button>
         </div>
 
-        <div class="settings-section">
-          <div class="form-group compact">
-            <label for="callSelectMic">Micrófono</label>
-            <select id="callSelectMic" onchange="changeMicrophone(this.value)"></select>
-          </div>
-          <div class="form-group compact">
-            <label for="callSelectCam">Cámara</label>
-            <select id="callSelectCam" onchange="changeCamera(this.value)"></select>
-          </div>
-          <div class="form-group compact">
-            <label for="callSelectHeadphones">Cascos / salida</label>
-            <select id="callSelectHeadphones" onchange="changeAudioOutput(this.value)"></select>
-            <p class="settings-note" id="audioOutputSupportMsg"></p>
-          </div>
-        </div>
-
-        <div class="settings-section">
-          <div class="volume-control">
-            <label for="localVolumeRange">Tu volumen</label>
-            <div class="range-row">
-              <input id="localVolumeRange" type="range" min="0" max="100" value="100" oninput="setLocalVolume(this.value)">
-              <span id="localVolumeValue">100%</span>
-            </div>
-          </div>
-          <div class="volume-control">
-            <label for="remoteVolumeRange">Volumen de la otra persona</label>
-            <div class="range-row">
-              <input id="remoteVolumeRange" type="range" min="0" max="100" value="100" oninput="setRemoteVolume(this.value)">
-              <span id="remoteVolumeValue">100%</span>
-            </div>
-          </div>
-        </div>
-
-        <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir de la llamada</button>
-        <div class="msg" id="settingsMsg"></div>
+        <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir</button>
       </aside>
 
       <section class="call-tile local-tile">
         <video id="localVideo" autoplay muted playsinline></video>
-        <div class="video-off-overlay" id="camOffMsg">
-          <span class="cam-icon">📷</span>
-          <span>Cámara apagada</span>
-        </div>
-        <div class="person-label" id="localNameLabel">Tú</div>
+        <div class="video-off-overlay hidden" id="camOffMsg">Camara apagada</div>
+        <div class="person-label" id="localNameLabel">Tu</div>
       </section>
 
-      <section class="call-tile remote-tile" id="remoteSlot">
+      <section class="call-tile remote-tile">
+        <video id="remoteVideo" autoplay playsinline></video>
         <div class="waiting-panel" id="waitingPanel">
-          <span>Esperando a la otra persona</span>
+          <span>Esperando a la otra persona...</span>
         </div>
+        <div class="person-label">Otra persona</div>
       </section>
 
-      <div class="room-code-pill" id="roomCodePill">Código: ----</div>
+      <section class="manual-panel" id="manualPanel">
+        <div class="call-status info" id="callStatus">
+          Modo manual compatible con GitHub Pages.
+        </div>
+
+        <div class="manual-role-panel" id="creatorPanel">
+          <h2>Creador de la llamada</h2>
+          <div class="manual-step">
+            <strong>Paso 1: copia este codigo y mandaselo a la otra persona</strong>
+            <textarea id="manualOfferCode" class="signal-code" readonly></textarea>
+            <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualOfferCode')">Copiar codigo de oferta</button>
+          </div>
+          <div class="manual-step">
+            <strong>Paso 2: pega aqui la respuesta que te devuelvan</strong>
+            <textarea id="manualFinalAnswerCode" class="signal-code" placeholder="Pega aqui el codigo de respuesta"></textarea>
+            <div class="btn-row">
+              <button class="btn btn-ghost" type="button" onclick="pasteCode('manualFinalAnswerCode')">Pegar</button>
+              <button class="btn btn-primary" type="button" onclick="applyManualAnswer()">Conectar</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="manual-role-panel hidden" id="guestPanel">
+          <h2>Persona que se une</h2>
+          <div class="manual-step">
+            <strong>Respuesta generada: copia este codigo y devuelveselo al creador</strong>
+            <textarea id="manualAnswerCode" class="signal-code" readonly></textarea>
+            <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualAnswerCode')">Copiar codigo de respuesta</button>
+          </div>
+        </div>
+      </section>
     </div>
-  </div>
+  </section>
 
   <script src="app.js"></script>
 </body>

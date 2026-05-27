@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>La Feria - Salas Privadas</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div class="screen" id="menuScreen">
+    <div class="menu-canopy" aria-hidden="true"></div>
+
+    <div class="menu-center">
+      <div class="logo-wrap">
+        <div class="logo">
+          <span class="logo-script">la</span>
+          <span class="logo-word" aria-label="FERIA">
+            <span>F</span><span>E</span><span>R</span><span>I</span><span>A</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="profile-badge" id="profileBadge">
+          <div class="avatar" id="avatarDisplay">?</div>
+          <div class="profile-name">
+            <span id="profileNameDisplay">Sin nombre</span>
+            Tu perfil activo
+          </div>
+        </div>
+
+        <button class="menu-btn" onclick="goTo('profileScreen')">
+          <span class="icon">👤</span>
+          <span class="label">Añadir/Cambiar nombre de tu perfil</span>
+          <span class="num">1</span>
+        </button>
+        <button class="menu-btn" onclick="goTo('createScreen')">
+          <span class="icon">🔐</span>
+          <span class="label">Crear sala</span>
+          <span class="num">2</span>
+        </button>
+        <button class="menu-btn" onclick="goTo('joinScreen')">
+          <span class="icon">🚪</span>
+          <span class="label">Unirse a una sala</span>
+          <span class="num">3</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="screen hidden" id="profileScreen">
+    <div class="card form-card">
+      <div class="screen-title">
+        <button class="back-btn" onclick="goTo('menuScreen')">←</button>
+        EDITAR PERFIL
+      </div>
+      <div class="form-group">
+        <label for="profileInput">Nombre de usuario</label>
+        <input type="text" id="profileInput" placeholder="ej: CyberUser_42" maxlength="24">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="goTo('menuScreen')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveProfile()">Guardar</button>
+      </div>
+      <div class="msg" id="profileMsg"></div>
+    </div>
+  </div>
+
+  <div class="screen hidden" id="createScreen">
+    <div class="card form-card">
+      <div class="screen-title">
+        <button class="back-btn" onclick="goTo('menuScreen')">←</button>
+        CREAR SALA PRIVADA
+      </div>
+      <div class="form-group">
+        <label for="createRoomName">Nombre de la sala (solo lo ves tú)</label>
+        <input type="text" id="createRoomName" placeholder="Mi Sala Secreta" maxlength="32">
+      </div>
+      <div class="form-group">
+        <label for="createRoomPass">Contraseña de acceso</label>
+        <input type="password" id="createRoomPass" placeholder="Mín. 4 caracteres" maxlength="48">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="goTo('menuScreen')">Cancelar</button>
+        <button class="btn btn-primary" onclick="createRoom()">Crear sala →</button>
+      </div>
+      <div class="msg" id="createMsg"></div>
+    </div>
+  </div>
+
+  <div class="screen hidden" id="joinScreen">
+    <div class="card form-card">
+      <div class="screen-title">
+        <button class="back-btn" onclick="goTo('menuScreen')">←</button>
+        UNIRSE A UNA SALA
+      </div>
+      <p class="join-hint">
+        Introduce la contraseña que el creador de la sala te haya compartido.
+        Las salas no se listan por privacidad.
+      </p>
+      <div class="form-group">
+        <label for="joinPass">Contraseña de la sala</label>
+        <input type="password" id="joinPass" placeholder="Contraseña secreta" maxlength="48"
+               onkeydown="if(event.key==='Enter') joinRoom()">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="goTo('menuScreen')">Cancelar</button>
+        <button class="btn btn-primary" onclick="joinRoom()">Entrar →</button>
+      </div>
+      <div class="msg" id="joinMsg"></div>
+    </div>
+  </div>
+
+  <div class="perm-overlay hidden" id="permOverlay">
+    <div class="perm-card">
+      <div class="perm-icon">🎥</div>
+      <div class="perm-title">Cámara, micrófono y cascos</div>
+      <p class="perm-desc">
+        Selecciona los dispositivos que quieres usar.
+        <strong>Todo el procesamiento es local</strong>: no se usan APIs externas.
+      </p>
+
+      <div class="device-selectors">
+        <div class="form-group">
+          <label for="selectCam">🎥 Cámara</label>
+          <select id="selectCam"></select>
+        </div>
+        <div class="form-group">
+          <label for="selectMic">🎙 Micrófono</label>
+          <select id="selectMic"></select>
+        </div>
+        <div class="form-group">
+          <label for="selectHeadphones">🎧 Cascos / salida</label>
+          <select id="selectHeadphones"></select>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-full" onclick="requestPermissions()">
+        Conceder permisos y entrar
+      </button>
+      <button class="btn btn-ghost btn-full btn-sm" onclick="skipPermissions()">
+        Continuar sin cámara/micrófono
+      </button>
+      <div class="msg" id="permMsg"></div>
+    </div>
+  </div>
+
+  <div class="screen hidden" id="roomScreen">
+    <div class="call-stage">
+      <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuración de llamada" aria-expanded="false" onclick="toggleSettingsPanel()">
+        <span aria-hidden="true">⚙</span>
+      </button>
+
+      <aside class="settings-panel hidden" id="settingsPanel" aria-label="Configuración de llamada">
+        <div class="settings-header">
+          <div>
+            <span class="settings-kicker">Cabina de control</span>
+            <h2>Ajustes de llamada</h2>
+          </div>
+          <button class="settings-close" type="button" aria-label="Cerrar configuración" onclick="closeSettingsPanel()">×</button>
+        </div>
+
+        <div class="settings-section">
+          <button class="settings-action" id="btnMic" type="button" onclick="toggleMic()">
+            <span class="settings-icon" id="micIcon" aria-hidden="true">🎙</span>
+            <span>
+              <strong id="micLabel">Micro activo</strong>
+              <small id="micStateText">Tu voz se está enviando</small>
+            </span>
+          </button>
+
+          <button class="settings-action" id="btnCam" type="button" onclick="toggleCam()">
+            <span class="settings-icon" id="camIcon" aria-hidden="true">📷</span>
+            <span>
+              <strong id="camLabel">Cámara activa</strong>
+              <small id="camStateText">Tu vídeo se está enviando</small>
+            </span>
+          </button>
+
+          <button class="settings-action" id="btnDeafen" type="button" onclick="toggleRemoteAudio()">
+            <span class="settings-icon" id="deafenIcon" aria-hidden="true">🎧</span>
+            <span>
+              <strong id="deafenLabel">Audio recibido activo</strong>
+              <small id="deafenStateText">Estás escuchando la llamada</small>
+            </span>
+          </button>
+
+          <button class="settings-action" id="btnMicMonitor" type="button" onclick="toggleMicMonitor()">
+            <span class="settings-icon" id="micMonitorIcon" aria-hidden="true">◉</span>
+            <span>
+              <strong id="micMonitorLabel">Probar micrófono</strong>
+              <small id="micMonitorStateText">Escúchate solo en tus cascos</small>
+            </span>
+          </button>
+        </div>
+
+        <div class="settings-section">
+          <div class="form-group compact">
+            <label for="callSelectMic">Micrófono</label>
+            <select id="callSelectMic" onchange="changeMicrophone(this.value)"></select>
+          </div>
+          <div class="form-group compact">
+            <label for="callSelectCam">Cámara</label>
+            <select id="callSelectCam" onchange="changeCamera(this.value)"></select>
+          </div>
+          <div class="form-group compact">
+            <label for="callSelectHeadphones">Cascos / salida</label>
+            <select id="callSelectHeadphones" onchange="changeAudioOutput(this.value)"></select>
+            <p class="settings-note" id="audioOutputSupportMsg"></p>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="volume-control">
+            <label for="localVolumeRange">Tu volumen</label>
+            <div class="range-row">
+              <input id="localVolumeRange" type="range" min="0" max="100" value="100" oninput="setLocalVolume(this.value)">
+              <span id="localVolumeValue">100%</span>
+            </div>
+          </div>
+          <div class="volume-control">
+            <label for="remoteVolumeRange">Volumen de la otra persona</label>
+            <div class="range-row">
+              <input id="remoteVolumeRange" type="range" min="0" max="100" value="100" oninput="setRemoteVolume(this.value)">
+              <span id="remoteVolumeValue">100%</span>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir de la llamada</button>
+        <div class="msg" id="settingsMsg"></div>
+      </aside>
+
+      <section class="call-tile local-tile">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <div class="video-off-overlay" id="camOffMsg">
+          <span class="cam-icon">📷</span>
+          <span>Cámara apagada</span>
+        </div>
+        <div class="person-label" id="localNameLabel">Tú</div>
+      </section>
+
+      <section class="call-tile remote-tile" id="remoteSlot">
+        <div class="waiting-panel" id="waitingPanel">
+          <span>Esperando a la otra persona</span>
+        </div>
+      </section>
+
+      <div class="room-code-pill" id="roomCodePill">Código: ----</div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

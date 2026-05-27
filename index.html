@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>La Feria - Llamadas Manuales</title>
+  <title>La Feria - Llamadas Locales</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -37,12 +37,12 @@
         </button>
         <button class="menu-btn" onclick="goTo('createScreen')">
           <span class="icon">🔐</span>
-          <span class="label">Crear llamada manual</span>
+          <span class="label">Crear llamada</span>
           <span class="num">2</span>
         </button>
         <button class="menu-btn" onclick="goTo('joinScreen')">
           <span class="icon">🚪</span>
-          <span class="label">Responder llamada manual</span>
+          <span class="label">Unirse a llamada</span>
           <span class="num">3</span>
         </button>
       </div>
@@ -71,19 +71,17 @@
     <div class="card form-card">
       <div class="screen-title">
         <button class="back-btn" onclick="goTo('menuScreen')">←</button>
-        CREAR LLAMADA MANUAL
+        CREAR LLAMADA
       </div>
-      <div class="form-group">
-        <label for="createRoomName">Nombre de la llamada (solo organización local)</label>
-        <input type="text" id="createRoomName" placeholder="Mi llamada" maxlength="32">
-      </div>
-      <div class="form-group">
-        <label for="createRoomPass">Clave local opcional</label>
-        <input type="password" id="createRoomPass" placeholder="Mín. 4 caracteres para organizar la llamada" maxlength="48">
-      </div>
-      <div class="btn-row">
-        <button class="btn btn-ghost" onclick="goTo('menuScreen')">Cancelar</button>
-        <button class="btn btn-primary" onclick="createRoom()">Crear llamada →</button>
+      <p class="join-hint">
+        Se generara una sala corta y un enlace local para compartir con la otra persona.
+      </p>
+      <button class="btn btn-primary btn-full" onclick="createRoom()">Crear llamada</button>
+      <div class="created-room-panel hidden" id="createdRoomPanel">
+        <span>Llamada creada. Comparte este enlace con la otra persona.</span>
+        <strong id="createdRoomCode">----</strong>
+        <div class="share-link" id="createdRoomLink"></div>
+        <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyRoomLink()">Copiar enlace</button>
       </div>
       <div class="msg" id="createMsg"></div>
     </div>
@@ -93,20 +91,20 @@
     <div class="card form-card">
       <div class="screen-title">
         <button class="back-btn" onclick="goTo('menuScreen')">←</button>
-        RESPONDER LLAMADA MANUAL
+        UNIRSE A LLAMADA
       </div>
       <p class="join-hint">
-        En GitHub Pages no hay salas online automáticas. Entra aquí,
-        pega el código que te mande la otra persona y genera una respuesta.
+        Escribe el codigo corto de sala o abre directamente un enlace con ?room=A7K9.
       </p>
       <div class="form-group">
-        <label for="joinPass">Nombre o clave local de la llamada</label>
-        <input type="password" id="joinPass" placeholder="Cualquier referencia para ti" maxlength="48"
+        <label for="joinRoomCode">Codigo de sala</label>
+        <input type="text" id="joinRoomCode" placeholder="A7K9" maxlength="8"
+               oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"
                onkeydown="if(event.key==='Enter') joinRoom()">
       </div>
       <div class="btn-row">
         <button class="btn btn-ghost" onclick="goTo('menuScreen')">Cancelar</button>
-        <button class="btn btn-primary" onclick="joinRoom()">Entrar y pegar código →</button>
+        <button class="btn btn-primary" onclick="joinRoom()">Unirse</button>
       </div>
       <div class="msg" id="joinMsg"></div>
     </div>
@@ -159,52 +157,6 @@
             <h2>Ajustes de llamada</h2>
           </div>
           <button class="settings-close" type="button" aria-label="Cerrar configuración" onclick="closeSettingsPanel()">×</button>
-        </div>
-
-        <div class="settings-section manual-signal-panel">
-          <span class="settings-kicker">Modo compatible con GitHub Pages</span>
-          <h3>Conexión manual</h3>
-          <p class="settings-note">
-            Sin servidor ni APIs no existen salas automáticas. Copia y pega estos códigos con la otra persona para conectar WebRTC.
-          </p>
-
-          <label class="stun-option" for="usePublicStun">
-            <input id="usePublicStun" type="checkbox">
-            Usar STUN público gratuito de Google para mejorar conexiones entre redes distintas
-          </label>
-          <p class="settings-note">
-            Si lo activas, dependes de un servidor STUN externo gratuito. No tiene clave ni facturación, pero ya no es 100% sin servicios externos.
-          </p>
-
-          <div class="manual-steps">
-            <div class="manual-step">
-              <strong>Paso 1</strong>
-              <span>Crea una invitación y mándasela a la otra persona.</span>
-              <button class="btn btn-primary btn-full" type="button" onclick="createManualOffer()">Crear llamada</button>
-              <textarea id="manualOfferCode" class="signal-code" readonly placeholder="Aquí aparecerá el código de invitación."></textarea>
-              <button class="btn btn-ghost btn-full btn-sm" type="button" onclick="copyManualCode('manualOfferCode')">Copiar código de invitación</button>
-            </div>
-
-            <div class="manual-step">
-              <strong>Paso 2</strong>
-              <span>Si recibiste una invitación, pégala aquí y genera tu respuesta.</span>
-              <textarea id="manualReceivedCode" class="signal-code" placeholder="Pega aquí el código recibido."></textarea>
-              <button class="btn btn-ghost btn-full btn-sm" type="button" onclick="pasteManualCode('manualReceivedCode')">Pegar código recibido</button>
-              <button class="btn btn-primary btn-full" type="button" onclick="generateManualAnswer()">Generar respuesta</button>
-              <textarea id="manualAnswerCode" class="signal-code" readonly placeholder="Aquí aparecerá tu respuesta."></textarea>
-              <button class="btn btn-ghost btn-full btn-sm" type="button" onclick="copyManualCode('manualAnswerCode')">Copiar respuesta</button>
-            </div>
-
-            <div class="manual-step">
-              <strong>Paso 3</strong>
-              <span>Si tú creaste la invitación, pega la respuesta final y conecta.</span>
-              <textarea id="manualFinalAnswerCode" class="signal-code" placeholder="Pega aquí la respuesta final."></textarea>
-              <button class="btn btn-ghost btn-full btn-sm" type="button" onclick="pasteManualCode('manualFinalAnswerCode')">Pegar respuesta final</button>
-              <button class="btn btn-primary btn-full" type="button" onclick="applyManualAnswer()">Conectar</button>
-            </div>
-          </div>
-
-          <div class="msg" id="manualMsg"></div>
         </div>
 
         <div class="settings-section">

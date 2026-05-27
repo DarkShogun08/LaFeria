@@ -186,28 +186,86 @@ async function waitForIceGatheringComplete(pc) {
   });
 }
 
-function encodeSignalPayload(payload) {
-  const bytes = new TextEncoder().encode(JSON.stringify(payload));
-  let binary = '';
-  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
-  return btoa(binary);
+async function encodeSignalPayload(payload) {
+  const compact = {
+    a: 'lf',
+    v: 1,
+    t: payload.type === 'offer' ? 'o' : 'a',
+    n: payload.name,
+    d: [payload.description.type, payload.description.sdp],
+    s: payload.stun ? 1 : 0,
+    c: payload.createdAt,
+  };
+  const bytes = new TextEncoder().encode(JSON.stringify(compact));
+  const compressed = await compressBytes(bytes);
+  return `${compressed.wasCompressed ? 'Z' : 'J'}${base64UrlEncode(compressed.bytes)}`;
 }
 
-function decodeSignalPayload(text) {
+function base64UrlEncode(bytes) {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.slice(i, i + 0x8000));
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecode(text) {
+  const base64 = text.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(text.length / 4) * 4, '=');
+  return Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+}
+
+async function compressBytes(bytes) {
+  if (!window.CompressionStream) return { bytes, wasCompressed: false };
+
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  const buffer = await new Response(stream).arrayBuffer();
+  return { bytes: new Uint8Array(buffer), wasCompressed: true };
+}
+
+async function decompressBytes(bytes) {
+  if (!window.DecompressionStream) {
+    throw new Error('Este navegador no puede descomprimir codigos compactos. Prueba con Chrome, Edge o Firefox actualizado.');
+  }
+
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const buffer = await new Response(stream).arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
+async function decodeSignalPayload(text) {
   const clean = String(text || '').trim();
   if (!clean) throw new Error('Pega primero un codigo de conexion.');
 
   try {
-    const json = new TextDecoder().decode(
-      Uint8Array.from(atob(clean), char => char.charCodeAt(0))
-    );
-    const payload = JSON.parse(json);
+    let json = '';
+    if (clean[0] === 'Z') {
+      json = new TextDecoder().decode(await decompressBytes(base64UrlDecode(clean.slice(1))));
+    } else if (clean[0] === 'J') {
+      json = new TextDecoder().decode(base64UrlDecode(clean.slice(1)));
+    } else {
+      json = new TextDecoder().decode(
+        Uint8Array.from(atob(clean), char => char.charCodeAt(0))
+      );
+    }
 
-    if (payload.app !== 'la-feria' || payload.version !== 1 || !payload.description?.sdp) {
+    const payload = JSON.parse(json);
+    const normalized = payload.a === 'lf'
+      ? {
+          app: 'la-feria',
+          version: payload.v,
+          type: payload.t === 'o' ? 'offer' : 'answer',
+          name: payload.n,
+          description: { type: payload.d?.[0], sdp: payload.d?.[1] },
+          stun: Boolean(payload.s),
+          createdAt: payload.c,
+        }
+      : payload;
+
+    if (normalized.app !== 'la-feria' || normalized.version !== 1 || !normalized.description?.sdp) {
       throw new Error('Formato no reconocido.');
     }
 
-    return payload;
+    return normalized;
   } catch (err) {
     throw new Error('El codigo no parece valido. Copia y pega el texto completo.');
   }
@@ -239,7 +297,7 @@ async function createManualOffer() {
     await pc.setLocalDescription(offer);
     await waitForIceGatheringComplete(pc);
 
-    $('manualOfferCode').value = encodeSignalPayload({
+    $('manualOfferCode').value = await encodeSignalPayload({
       app: 'la-feria',
       version: 1,
       type: 'offer',
@@ -260,7 +318,7 @@ async function generateManualAnswer() {
 
   let payload;
   try {
-    payload = decodeSignalPayload($('manualReceivedCode').value);
+    payload = await decodeSignalPayload($('manualReceivedCode').value);
     if (payload.type !== 'offer') throw new Error('El codigo recibido no es una oferta.');
   } catch (err) {
     showMsg('joinMsg', 'error', err.message);
@@ -280,7 +338,7 @@ async function generateManualAnswer() {
     await pc.setLocalDescription(answer);
     await waitForIceGatheringComplete(pc);
 
-    $('manualAnswerCode').value = encodeSignalPayload({
+    $('manualAnswerCode').value = await encodeSignalPayload({
       app: 'la-feria',
       version: 1,
       type: 'answer',
@@ -303,7 +361,7 @@ async function applyManualAnswer() {
   }
 
   try {
-    const payload = decodeSignalPayload($('manualFinalAnswerCode').value);
+    const payload = await decodeSignalPayload($('manualFinalAnswerCode').value);
     if (payload.type !== 'answer') throw new Error('El codigo pegado no es una respuesta.');
 
     await state.peer.setRemoteDescription(new RTCSessionDescription(payload.description));

@@ -1,18 +1,16 @@
-// La Feria - Llamadas Manuales
-// Version GitHub Pages: WebRTC manual, sin backend y sin APIs de pago.
-//
-// Importante:
-// - GitHub Pages solo sirve archivos estaticos.
-// - No existe un servidor aqui que pueda recibir POST /signal.
-// - Por eso la senalizacion WebRTC se hace copiando y pegando codigos.
-// - El STUN publico es opcional y esta desactivado por defecto.
-
-const MANUAL_PEER_ID = 'manual-peer';
+// La Feria - Llamadas locales
+// WebRTC con senalizacion automatica por WebSocket local.
 
 const state = {
   profile: localStorage.getItem('nexus_name') || '',
   currentRoom: null,
   myId: makeLocalId(),
+  serverOrigin: window.location.origin,
+  signalingSocket: null,
+  signalingReady: false,
+  pendingCandidates: new Map(),
+  creatorShareVisible: false,
+  creatorShareLink: '',
   localStream: null,
   videoInputId: '',
   audioInputId: '',
@@ -35,8 +33,6 @@ const state = {
   micEnabled: false,
   camEnabled: false,
   peers: new Map(),
-  manualRole: '',
-  manualRemoteName: 'La otra persona',
 };
 
 function makeLocalId() {
@@ -48,34 +44,6 @@ function makeLocalId() {
     : Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
 
   return `local-${Date.now().toString(16)}-${randomPart}`;
-}
-
-function localHashFallback(text) {
-  let h1 = 0x811c9dc5;
-  let h2 = 0x01000193;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i);
-    h1 ^= code;
-    h1 = Math.imul(h1, 0x01000193);
-    h2 ^= code + i;
-    h2 = Math.imul(h2, 0x811c9dc5);
-  }
-
-  return `${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}`;
-}
-
-async function hashPass(pass) {
-  if (!globalThis.crypto?.subtle?.digest) return localHashFallback(pass);
-
-  const buf = await globalThis.crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(pass)
-  );
-
-  return Array.from(new Uint8Array(buf))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 function goTo(screenId) {
@@ -95,10 +63,6 @@ function showMsg(id, type, text) {
   if (type === 'success') {
     setTimeout(() => el.classList.remove('show'), 3200);
   }
-}
-
-function showManualMsg(type, text) {
-  showMsg('manualMsg', type, text);
 }
 
 function escHtml(str) {
@@ -123,7 +87,14 @@ function saveProfile() {
   localStorage.setItem('nexus_name', val);
   updateProfileBadge();
   showMsg('profileMsg', 'success', 'Perfil guardado.');
-  setTimeout(() => goTo('menuScreen'), 900);
+  const roomFromUrl = normalizeRoomCode(new URLSearchParams(window.location.search).get('room'));
+  setTimeout(() => {
+    if (roomFromUrl) {
+      enterRoom(roomFromUrl, false);
+    } else {
+      goTo('menuScreen');
+    }
+  }, 900);
 }
 
 async function createRoom() {
@@ -131,15 +102,16 @@ async function createRoom() {
     return showMsg('createMsg', 'error', 'Debes configurar tu perfil primero.');
   }
 
-  const name = document.getElementById('createRoomName').value.trim();
-  const pass = document.getElementById('createRoomPass').value || name || state.myId;
+  await loadServerConfig();
+  const code = generateRoomCode();
+  const link = buildRoomLink(code);
 
-  if (!name) return showMsg('createMsg', 'error', 'Escribe un nombre para la llamada.');
-  if (pass.length < 4) return showMsg('createMsg', 'error', 'La clave local debe tener al menos 4 caracteres.');
+  state.creatorShareVisible = true;
+  state.creatorShareLink = link;
 
-  const hash = await hashPass(pass);
-  showMsg('createMsg', 'success', 'Llamada preparada. Ahora crea y comparte la invitación manual.');
-  setTimeout(() => enterRoom(name, hash, pass), 700);
+  showCreatedRoom(code, link);
+  showMsg('createMsg', 'success', 'Llamada creada. Comparte este enlace con la otra persona.');
+  setTimeout(() => enterRoom(code, true), 450);
 }
 
 async function joinRoom() {
@@ -147,17 +119,90 @@ async function joinRoom() {
     return showMsg('joinMsg', 'error', 'Debes configurar tu perfil primero.');
   }
 
-  const pass = document.getElementById('joinPass').value || `manual-${Date.now()}`;
-  const hash = await hashPass(pass);
-  showMsg('joinMsg', 'success', 'Entra y pega el código de invitación recibido.');
-  setTimeout(() => enterRoom('Llamada manual recibida', hash, pass), 500);
+  const code = normalizeRoomCode(document.getElementById('joinRoomCode').value);
+  if (!code) return showMsg('joinMsg', 'error', 'Escribe el codigo corto de la sala.');
+  state.creatorShareVisible = false;
+  state.creatorShareLink = '';
+  showMsg('joinMsg', 'success', `Entrando en la sala ${code}...`);
+  setTimeout(() => enterRoom(code, false), 350);
 }
 
-function enterRoom(name, hash, code) {
-  state.currentRoom = { name, hash, code };
+function enterRoom(code, isCreator = false) {
+  const roomCode = normalizeRoomCode(code);
+  state.currentRoom = {
+    code: roomCode,
+    isCreator,
+    link: isCreator ? (state.creatorShareLink || buildRoomLink(roomCode)) : buildRoomLink(roomCode),
+  };
+
+  showRoomStatus(`Entrando en la sala ${roomCode}...`);
   loadDevices().then(() => {
     document.getElementById('permOverlay').classList.remove('hidden');
   });
+}
+
+function generateRoomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(4);
+  globalThis.crypto?.getRandomValues?.(bytes);
+
+  let code = '';
+  for (let i = 0; i < 4; i += 1) {
+    const value = bytes[i] || Math.floor(Math.random() * alphabet.length);
+    code += alphabet[value % alphabet.length];
+  }
+  return code;
+}
+
+function normalizeRoomCode(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 8);
+}
+
+function buildRoomLink(code) {
+  const url = new URL(state.serverOrigin || window.location.origin);
+  url.pathname = '/';
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('room', normalizeRoomCode(code));
+  return url.toString();
+}
+
+async function loadServerConfig() {
+  try {
+    const res = await fetch('/local-config.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const config = await res.json();
+    if (config?.origin) state.serverOrigin = config.origin;
+  } catch (err) {
+    state.serverOrigin = window.location.origin;
+  }
+}
+
+function showCreatedRoom(code, link) {
+  const panel = document.getElementById('createdRoomPanel');
+  const codeEl = document.getElementById('createdRoomCode');
+  const linkEl = document.getElementById('createdRoomLink');
+
+  if (codeEl) codeEl.textContent = code;
+  if (linkEl) linkEl.textContent = link;
+  panel?.classList.remove('hidden');
+}
+
+async function copyRoomLink() {
+  const link = state.currentRoom?.link || state.creatorShareLink || document.getElementById('createdRoomLink')?.textContent;
+  if (!link) return;
+
+  try {
+    await navigator.clipboard.writeText(link);
+    showMsg('createMsg', 'success', 'Enlace copiado.');
+    showRoomStatus('Enlace copiado. Esperando a la otra persona...');
+  } catch (err) {
+    showMsg('createMsg', 'error', 'No se pudo copiar automaticamente. Selecciona el enlace y copialo.');
+  }
 }
 
 function getMediaAccessProblem() {
@@ -360,61 +405,57 @@ function skipPermissions() {
 function launchRoom() {
   document.getElementById('permOverlay').classList.add('hidden');
   document.getElementById('localNameLabel').textContent = state.profile || 'Tú';
-  document.getElementById('roomCodePill').textContent = 'Modo manual: copia y pega códigos';
   resetRemoteSlot();
-  clearManualFields();
+  document.getElementById('roomCodePill').textContent = `Sala: ${state.currentRoom?.code || '----'}`;
   goTo('roomScreen');
-  openSettingsPanel();
+  closeSettingsPanel();
   updateControls();
   applyAudioOutput();
-}
-
-function clearManualFields() {
-  ['manualOfferCode', 'manualReceivedCode', 'manualAnswerCode', 'manualFinalAnswerCode'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
+  connectSignaling();
 }
 
 function getRtcConfig() {
-  const usePublicStun = document.getElementById('usePublicStun')?.checked;
-  if (!usePublicStun) return { iceServers: [] };
-
-  return {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-    ],
-  };
+  return { iceServers: [] };
 }
 
-function createManualPeerConnection(remoteName = 'La otra persona') {
-  closePeer(MANUAL_PEER_ID);
-  state.manualRemoteName = remoteName || 'La otra persona';
+function createPeerConnection(peerId, remoteName = 'La otra persona') {
+  closePeer(peerId);
 
   const pc = new RTCPeerConnection(getRtcConfig());
-  state.peers.set(MANUAL_PEER_ID, { pc, stream: null });
+  state.peers.set(peerId, { pc, stream: null, name: remoteName });
   attachLocalMediaToPeer(pc);
 
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate) {
+      sendSignal({
+        type: 'ice-candidate',
+        target: peerId,
+        candidate,
+      });
+    }
+  };
+
   pc.ontrack = ({ track, streams }) => {
-    const peer = state.peers.get(MANUAL_PEER_ID);
+    const peer = state.peers.get(peerId);
     let stream = streams[0] || peer?.stream;
     if (!stream) stream = new MediaStream();
     if (!stream.getTracks().some(t => t.id === track.id)) stream.addTrack(track);
     if (peer) peer.stream = stream;
-    renderRemoteVideo(MANUAL_PEER_ID, stream);
+    renderRemoteVideo(peerId, stream);
   };
 
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'connected') {
-      showManualMsg('success', 'Conexión establecida. Ya deberíais veros y escucharos si la red lo permite.');
+      showRoomStatus('Conexion establecida.');
+      hideCreatorShare();
     } else if (['failed', 'disconnected'].includes(pc.connectionState)) {
-      showManualMsg('error', 'La conexión WebRTC ha fallado o se ha cortado. Prueba activando STUN o usando la misma red.');
+      showRoomStatus('No se pudo establecer la llamada. Revisa que ambos dispositivos esten en la misma red, que la web este en HTTPS y que los permisos de camara/microfono esten concedidos.');
     }
   };
 
   pc.oniceconnectionstatechange = () => {
     if (pc.iceConnectionState === 'failed') {
-      showManualMsg('error', 'ICE no pudo conectar. Sin TURN algunas redes no permiten la llamada.');
+      showRoomStatus('No se pudo establecer la llamada. Revisa que ambos dispositivos esten en la misma red, que la web este en HTTPS y que los permisos de camara/microfono esten concedidos.');
     }
   };
 
@@ -439,153 +480,175 @@ function attachLocalMediaToPeer(pc) {
   }
 }
 
-async function createManualOffer() {
-  try {
-    state.manualRole = 'offerer';
-    const pc = createManualPeerConnection('La otra persona');
-    showManualMsg('success', 'Creando invitación. Espera unos segundos mientras se recopilan datos de red.');
+function connectSignaling() {
+  if (!state.currentRoom?.code) return;
+  closeSignaling();
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await waitForIceGatheringComplete(pc);
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(scheme + '//' + window.location.host + '/ws');
+  state.signalingSocket = socket;
+  state.signalingReady = false;
 
-    const code = encodeSignalPayload({
-      app: 'la-feria',
-      version: 1,
-      type: 'offer',
+  socket.addEventListener('open', () => {
+    state.signalingReady = true;
+    sendSignal({
+      type: 'join-room',
+      room: state.currentRoom.code,
       name: state.profile || 'Invitado',
-      room: state.currentRoom?.name || 'Llamada manual',
-      description: pc.localDescription,
-      usesPublicStun: Boolean(document.getElementById('usePublicStun')?.checked),
     });
+  });
 
-    document.getElementById('manualOfferCode').value = code;
-    showManualMsg('success', 'Paso 1 listo: copia este código y mándaselo a la otra persona.');
-  } catch (err) {
-    showManualMsg('error', `No se pudo crear la invitación: ${err.message || err}`);
-  }
-}
-
-async function generateManualAnswer() {
-  try {
-    const payload = decodeSignalPayload(document.getElementById('manualReceivedCode').value);
-    if (payload.type !== 'offer') throw new Error('El código recibido no es una invitación válida.');
-
-    state.manualRole = 'answerer';
-    const pc = createManualPeerConnection(payload.name || 'La otra persona');
-    showManualMsg('success', 'Generando respuesta. Espera unos segundos mientras se recopilan datos de red.');
-
-    await pc.setRemoteDescription(new RTCSessionDescription(payload.description));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await waitForIceGatheringComplete(pc);
-
-    const code = encodeSignalPayload({
-      app: 'la-feria',
-      version: 1,
-      type: 'answer',
-      name: state.profile || 'Invitado',
-      room: payload.room || state.currentRoom?.name || 'Llamada manual',
-      description: pc.localDescription,
-      usesPublicStun: Boolean(document.getElementById('usePublicStun')?.checked),
-    });
-
-    document.getElementById('manualAnswerCode').value = code;
-    showManualMsg('success', 'Paso 2 listo: copia esta respuesta y mándasela a quien creó la llamada.');
-  } catch (err) {
-    showManualMsg('error', `No se pudo generar la respuesta: ${err.message || err}`);
-  }
-}
-
-async function applyManualAnswer() {
-  try {
-    const peer = state.peers.get(MANUAL_PEER_ID);
-    if (!peer?.pc || state.manualRole !== 'offerer') {
-      throw new Error('Primero debes crear una llamada en el Paso 1.');
+  socket.addEventListener('message', async (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      await handleSignal(message);
+    } catch (err) {
+      showRoomStatus('No se pudo establecer la llamada. Revisa que ambos dispositivos esten en la misma red, que la web este en HTTPS y que los permisos de camara/microfono esten concedidos.');
     }
+  });
 
-    const payload = decodeSignalPayload(document.getElementById('manualFinalAnswerCode').value);
-    if (payload.type !== 'answer') throw new Error('El código recibido no es una respuesta válida.');
+  socket.addEventListener('close', () => {
+    state.signalingReady = false;
+    if (state.currentRoom) showRoomStatus('Esperando a la otra persona...');
+  });
 
-    state.manualRemoteName = payload.name || 'La otra persona';
-    await peer.pc.setRemoteDescription(new RTCSessionDescription(payload.description));
-    showManualMsg('success', 'Respuesta aplicada. Conectando la llamada...');
-  } catch (err) {
-    showManualMsg('error', `No se pudo conectar: ${err.message || err}`);
-  }
-}
-
-function waitForIceGatheringComplete(pc) {
-  if (pc.iceGatheringState === 'complete') return Promise.resolve();
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      pc.removeEventListener('icegatheringstatechange', onChange);
-      resolve();
-    };
-    const onChange = () => {
-      if (pc.iceGatheringState === 'complete') finish();
-    };
-
-    pc.addEventListener('icegatheringstatechange', onChange);
-    setTimeout(finish, 8000);
+  socket.addEventListener('error', () => {
+    showRoomStatus('No se pudo establecer la llamada. Revisa que ambos dispositivos esten en la misma red, que la web este en HTTPS y que los permisos de camara/microfono esten concedidos.');
   });
 }
 
-function encodeSignalPayload(payload) {
-  const bytes = new TextEncoder().encode(JSON.stringify(payload));
-  let binary = '';
-  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  return btoa(binary);
+function closeSignaling() {
+  if (state.signalingSocket) {
+    state.signalingSocket.onclose = null;
+    state.signalingSocket.close();
+  }
+  state.signalingSocket = null;
+  state.signalingReady = false;
 }
 
-function decodeSignalPayload(text) {
-  const clean = text.trim();
-  if (!clean) throw new Error('Pega primero un código.');
+function sendSignal(payload) {
+  const socket = state.signalingSocket;
+  if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+  socket.send(JSON.stringify(payload));
+  return true;
+}
 
-  try {
-    const json = clean.startsWith('{')
-      ? clean
-      : new TextDecoder().decode(Uint8Array.from(atob(clean), c => c.charCodeAt(0)));
-    const payload = JSON.parse(json);
-    if (payload.app !== 'la-feria' || !payload.description?.type || !payload.description?.sdp) {
-      throw new Error('Formato no reconocido.');
+async function handleSignal(message) {
+  if (message.type === 'error') {
+    showRoomStatus(message.message || 'No se pudo establecer la llamada. Revisa que ambos dispositivos esten en la misma red, que la web este en HTTPS y que los permisos de camara/microfono esten concedidos.');
+    return;
+  }
+
+  if (message.type === 'room-joined') {
+    showRoomStatus('Esperando a la otra persona...');
+    updateWaitingPanel();
+    return;
+  }
+
+  if (message.type === 'peer-joined') {
+    showRoomStatus('Conectando con la otra persona...');
+    await createAndSendOffer(message.peerId, message.name);
+    return;
+  }
+
+  if (message.type === 'offer') {
+    showRoomStatus('Conectando con la otra persona...');
+    await acceptOffer(message.from, message.name, message.description);
+    return;
+  }
+
+  if (message.type === 'answer') {
+    const peer = state.peers.get(message.from);
+    if (peer?.pc) {
+      await peer.pc.setRemoteDescription(new RTCSessionDescription(message.description));
+      await flushPendingCandidates(message.from);
     }
-    return payload;
-  } catch (err) {
-    throw new Error('El código pegado no parece válido. Copia el texto completo y vuelve a intentarlo.');
+    return;
+  }
+
+  if (message.type === 'ice-candidate') {
+    await acceptIceCandidate(message.from, message.candidate);
+    return;
+  }
+
+  if (message.type === 'peer-left') {
+    closePeer(message.peerId);
+    showRoomStatus('Esperando a la otra persona...');
   }
 }
 
-async function copyManualCode(textareaId) {
-  const textarea = document.getElementById(textareaId);
-  const value = textarea?.value.trim();
-  if (!value) return showManualMsg('error', 'Todavía no hay ningún código para copiar.');
+async function createAndSendOffer(peerId, name) {
+  const pc = createPeerConnection(peerId, name);
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  sendSignal({
+    type: 'offer',
+    target: peerId,
+    name: state.profile || 'Invitado',
+    description: pc.localDescription,
+  });
+}
 
-  try {
-    await navigator.clipboard.writeText(value);
-    showManualMsg('success', 'Código copiado. Ahora mándaselo a la otra persona.');
-  } catch (err) {
-    textarea.focus();
-    textarea.select();
-    document.execCommand('copy');
-    showManualMsg('success', 'Código seleccionado para copiar.');
+async function acceptOffer(peerId, name, description) {
+  const pc = createPeerConnection(peerId, name);
+  await pc.setRemoteDescription(new RTCSessionDescription(description));
+  await flushPendingCandidates(peerId);
+
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  sendSignal({
+    type: 'answer',
+    target: peerId,
+    name: state.profile || 'Invitado',
+    description: pc.localDescription,
+  });
+}
+
+async function acceptIceCandidate(peerId, candidate) {
+  if (!candidate) return;
+  const peer = state.peers.get(peerId);
+  if (!peer?.pc?.remoteDescription) {
+    const pending = state.pendingCandidates.get(peerId) || [];
+    pending.push(candidate);
+    state.pendingCandidates.set(peerId, pending);
+    return;
+  }
+
+  await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+}
+
+async function flushPendingCandidates(peerId) {
+  const pending = state.pendingCandidates.get(peerId) || [];
+  state.pendingCandidates.delete(peerId);
+  const peer = state.peers.get(peerId);
+  if (!peer?.pc) return;
+
+  for (const candidate of pending) {
+    await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
   }
 }
 
-async function pasteManualCode(textareaId) {
-  const textarea = document.getElementById(textareaId);
-  if (!textarea) return;
+function showRoomStatus(text) {
+  const status = document.getElementById('roomStatusText');
+  if (status) status.textContent = text;
+}
 
-  try {
-    textarea.value = await navigator.clipboard.readText();
-    showManualMsg('success', 'Código pegado.');
-  } catch (err) {
-    textarea.focus();
-    showManualMsg('error', 'Tu navegador no permite pegar automáticamente. Pega el código manualmente en la caja.');
+function hideCreatorShare() {
+  state.creatorShareVisible = false;
+  document.getElementById('roomShareBox')?.classList.add('hidden');
+}
+
+function updateWaitingPanel() {
+  const shareBox = document.getElementById('roomShareBox');
+  const linkEl = document.getElementById('roomShareLink');
+  const codeEl = document.getElementById('roomShareCode');
+
+  if (state.currentRoom?.isCreator && state.creatorShareVisible) {
+    if (linkEl) linkEl.textContent = state.currentRoom.link;
+    if (codeEl) codeEl.textContent = state.currentRoom.code;
+    shareBox?.classList.remove('hidden');
+  } else {
+    shareBox?.classList.add('hidden');
   }
 }
 
@@ -594,8 +657,14 @@ function resetRemoteSlot() {
   if (!slot) return;
   slot.innerHTML = `
     <div class="waiting-panel" id="waitingPanel">
-      <span>Esperando conexión manual</span>
+      <span id="roomStatusText">Esperando a la otra persona...</span>
+      <div class="room-share-box hidden" id="roomShareBox">
+        <strong>Sala <span id="roomShareCode"></span></strong>
+        <span class="room-share-link" id="roomShareLink"></span>
+        <button class="btn btn-primary btn-sm" type="button" onclick="copyRoomLink()">Copiar enlace</button>
+      </div>
     </div>`;
+  updateWaitingPanel();
 }
 
 function renderRemoteVideo(peerId, stream) {
@@ -614,7 +683,7 @@ function renderRemoteVideo(peerId, stream) {
     const lbl = document.createElement('div');
     lbl.className = 'person-label';
     lbl.id = `rvl_${peerId}`;
-    lbl.textContent = state.manualRemoteName || 'La otra persona';
+    lbl.textContent = state.peers.get(peerId)?.name || 'La otra persona';
 
     card.appendChild(vid);
     card.appendChild(lbl);
@@ -1037,13 +1106,15 @@ function leaveRoom() {
   state.micEnabled = false;
   state.camEnabled = false;
   state.remoteAudioMuted = false;
-  state.manualRole = '';
-  state.manualRemoteName = 'La otra persona';
+  state.pendingCandidates.clear();
+  state.creatorShareVisible = false;
+  state.creatorShareLink = '';
+  closeSignaling();
 
   document.getElementById('localVideo').srcObject = null;
-  document.getElementById('joinPass').value = '';
-  document.getElementById('createRoomName').value = '';
-  document.getElementById('createRoomPass').value = '';
+  const joinRoomCode = document.getElementById('joinRoomCode');
+  if (joinRoomCode) joinRoomCode.value = '';
+  document.getElementById('createdRoomPanel')?.classList.add('hidden');
 
   goTo('menuScreen');
 }
@@ -1069,7 +1140,30 @@ if (navigator.mediaDevices?.addEventListener) {
 window.addEventListener('beforeunload', () => {
   cleanupAudioProcessing(true);
   state.localStream?.getTracks().forEach(t => t.stop());
+  closeSignaling();
   state.peers.forEach(({ pc }) => pc.close());
 });
 
+
+function bootFromUrlRoom() {
+  const room = normalizeRoomCode(new URLSearchParams(window.location.search).get('room'));
+  if (!room) return;
+
+  state.creatorShareVisible = false;
+  state.creatorShareLink = '';
+  const input = document.getElementById('joinRoomCode');
+  if (input) input.value = room;
+
+  if (!state.profile) {
+    goTo('profileScreen');
+    showMsg('profileMsg', 'error', 'Configura tu perfil para entrar en la sala ' + room + '.');
+    return;
+  }
+
+  showMsg('joinMsg', 'success', 'Entrando en la sala ' + room + '...');
+  enterRoom(room, false);
+}
+
 updateProfileBadge();
+loadServerConfig();
+bootFromUrlRoom();

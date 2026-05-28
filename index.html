@@ -89,7 +89,7 @@
         <span>Paso 3: cuando recibas su respuesta de aceptacion, pegala para conectar.</span>
       </div>
 
-      <button class="btn btn-primary btn-full" type="button" onclick="createRoom()">Crear sala</button>
+      <button class="btn btn-primary btn-full" id="createRoomButton" type="button" onclick="createRoom()">Crear sala</button>
       <div class="msg" id="createMsg"></div>
     </div>
   </section>
@@ -150,6 +150,25 @@
               <small>Activa o apaga tu camara.</small>
             </span>
           </button>
+        </div>
+
+        <div class="settings-section">
+          <div class="form-group">
+            <label for="cameraSelect">Camara</label>
+            <select id="cameraSelect" onchange="changeCamera(this.value)"></select>
+            <button class="btn btn-ghost btn-full btn-sm" type="button" onclick="activateCamera()">Activar camara</button>
+          </div>
+
+          <div class="form-group">
+            <label for="microphoneSelect">Microfono</label>
+            <select id="microphoneSelect" onchange="changeMicrophone(this.value)"></select>
+            <button class="btn btn-ghost btn-full btn-sm" type="button" onclick="activateMicrophone()">Activar microfono</button>
+          </div>
+
+          <div class="form-group hidden" id="speakerGroup">
+            <label for="speakerSelect">Salida de audio</label>
+            <select id="speakerSelect" onchange="changeSpeaker(this.value)"></select>
+          </div>
         </div>
 
         <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir</button>

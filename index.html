@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>La Feria - Salas WebRTC</title>
+  <title>La Feria - GitHub Pages</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -31,7 +31,7 @@
 
         <button class="menu-btn" type="button" onclick="showScreen('profileScreen')">
           <span class="icon" aria-hidden="true">1</span>
-          <span class="label">Anadir/Cambiar nombre de perfil</span>
+          <span class="label">Anadir/Cambiar nombre</span>
         </button>
         <button class="menu-btn" type="button" onclick="showScreen('createScreen')">
           <span class="icon" aria-hidden="true">2</span>
@@ -70,23 +70,23 @@
         CREAR SALA
       </div>
       <p class="join-hint">
-        La app creara una sala temporal y un enlace corto. El video y el audio iran por WebRTC P2P;
-        el servidor solo intercambia mensajes de conexion.
+        Esta version funciona directamente en GitHub Pages. Para conectar sin servidor,
+        puede ser necesario enviar una invitacion y devolver una respuesta de aceptacion.
       </p>
 
       <label class="option-row" for="usePublicStun">
-        <input id="usePublicStun" type="checkbox" checked>
+        <input id="usePublicStun" type="checkbox">
         <span>
-          Usar STUN publico para mejorar la conexion entre redes. STUN no crea salas,
-          no retransmite audio/video y no sustituye al servidor WebSocket.
+          Usar STUN publico gratuito para mejorar conexiones entre redes distintas.
+          STUN no crea salas y no sustituye la respuesta de aceptacion.
         </span>
       </label>
 
       <div class="steps-box">
         <strong>Para quien crea la llamada</strong>
-        <span>Paso 1: pulsa crear sala.</span>
-        <span>Paso 2: copia el enlace corto y mandaselo a la otra persona.</span>
-        <span>Paso 3: espera en la sala hasta que acepten la llamada.</span>
+        <span>Paso 1: pulsa crear sala y concede camara/microfono.</span>
+        <span>Paso 2: copia el enlace de invitacion y mandaselo a la otra persona.</span>
+        <span>Paso 3: cuando recibas su respuesta de aceptacion, pegala para conectar.</span>
       </div>
 
       <button class="btn btn-primary btn-full" type="button" onclick="createRoom()">Crear sala</button>
@@ -101,19 +101,20 @@
         <span id="joinTitle">UNIRSE A LLAMADA</span>
       </div>
       <p class="join-hint" id="joinHint">
-        Introduce el codigo corto de sala o abre el enlace de invitacion que te enviaron.
+        Pega aqui el enlace o codigo de invitacion que te mandaron.
       </p>
 
       <label class="option-row" for="joinUsePublicStun">
-        <input id="joinUsePublicStun" type="checkbox" checked>
+        <input id="joinUsePublicStun" type="checkbox">
         <span>
-          Usar STUN publico. En redes muy restrictivas puede hacer falta TURN, pero esta version no usa TURN de pago.
+          Usar STUN publico gratuito. En redes restrictivas puede hacer falta TURN,
+          pero esta version no usa TURN de pago.
         </span>
       </label>
 
       <div class="form-group">
-        <label for="roomCodeInput">Codigo de sala</label>
-        <input id="roomCodeInput" type="text" maxlength="12" placeholder="A7K9" autocomplete="off">
+        <label for="incomingInviteCode">Invitacion recibida</label>
+        <textarea id="incomingInviteCode" class="signal-code" placeholder="Pega aqui el enlace completo o el codigo de invitacion"></textarea>
       </div>
       <button class="btn btn-primary btn-full" type="button" onclick="acceptCall()">Aceptar llamada</button>
       <div class="msg" id="joinMsg"></div>
@@ -163,26 +164,52 @@
       <section class="call-tile remote-tile">
         <video id="remoteVideo" autoplay playsinline></video>
         <div class="waiting-panel" id="waitingPanel">
-          <span>Esperando a la otra persona...</span>
+          <span>Esperando conexion...</span>
         </div>
         <div class="person-label" id="remoteNameLabel">Otra persona</div>
       </section>
 
       <section class="room-panel" id="roomPanel">
         <div class="call-status info" id="callStatus">
-          Preparando sala...
+          Preparando llamada...
         </div>
 
         <div class="room-invite hidden" id="invitePanel">
           <div>
-            <span class="room-code-kicker">Codigo de sala</span>
-            <strong class="room-code" id="roomCodeDisplay">----</strong>
+            <span class="room-code-kicker">Invitacion</span>
+            <strong class="room-code">GitHub Pages</strong>
           </div>
           <div class="invite-link-wrap">
             <input id="inviteLink" class="invite-link" type="text" readonly aria-label="Enlace de invitacion">
             <button class="btn btn-primary" type="button" onclick="copyInvitation()">Copiar invitacion</button>
           </div>
         </div>
+
+        <div class="room-invite hidden" id="creatorAnswerPanel">
+          <div>
+            <span class="room-code-kicker">Respuesta</span>
+            <strong class="room-code">Final</strong>
+          </div>
+          <div class="stack-panel">
+            <p class="join-hint">Cuando la otra persona te mande su respuesta de aceptacion, pegala aqui.</p>
+            <textarea id="creatorAnswerCode" class="signal-code" placeholder="Pega aqui la respuesta de aceptacion"></textarea>
+            <button class="btn btn-primary" type="button" onclick="completeConnection()">Conectar</button>
+          </div>
+        </div>
+
+        <div class="room-invite hidden" id="answerPanel">
+          <div>
+            <span class="room-code-kicker">Respuesta</span>
+            <strong class="room-code">Aceptar</strong>
+          </div>
+          <div class="stack-panel">
+            <p class="join-hint">Respuesta generada. Devuelvesela al creador para completar la conexion.</p>
+            <textarea id="answerCode" class="signal-code" readonly aria-label="Respuesta de aceptacion"></textarea>
+            <button class="btn btn-primary" type="button" onclick="copyAnswer()">Copiar respuesta</button>
+          </div>
+        </div>
+
+        <div class="msg" id="roomMsg"></div>
       </section>
     </div>
   </section>

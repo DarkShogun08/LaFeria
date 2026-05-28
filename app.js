@@ -1,35 +1,20 @@
-// La Feria - GitHub Pages + servidor de senalizacion WebSocket.
-// Cambia esta constante por tu servidor real cuando publiques la web.
-// Local:   "ws://localhost:3000/ws"
-// Publico: "wss://mi-dominio/ws"
-const SIGNALING_SERVER_URL = "ws://localhost:3000/ws";
+// La Feria - version estatica para GitHub Pages.
+// No usa backend, WebSocket, Firebase, Supabase, claves API ni servicios de pago.
+// La senalizacion WebRTC se hace con enlace de invitacion + respuesta de aceptacion.
 
-// STUN ayuda a conectar navegadores en redes distintas.
-// STUN no crea salas.
-// STUN no retransmite video/audio.
-// STUN no sustituye el WebSocket de senalizacion.
-// Si una red es muy restrictiva puede hacer falta TURN.
-// Esta version no usa TURN de pago por defecto.
-const RTC_CONFIG = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-  ],
-};
+const SIGNAL_PREFIX = "LF1";
+const SIGNAL_COMPRESSED_PREFIX = "LF1C";
+const PUBLIC_STUN_SERVER = "stun:stun.l.google.com:19302";
 
 const state = {
   profile: localStorage.getItem("la_feria_profile") || "",
   role: "",
-  roomId: "",
-  inviteLink: "",
-  ws: null,
   peer: null,
   localStream: null,
   remoteStream: null,
-  pendingCandidates: [],
   micEnabled: true,
   camEnabled: true,
-  isLeaving: false,
-  hasRemoteDescription: false,
+  pendingInviteCode: "",
 };
 
 function $(id) {
@@ -43,16 +28,6 @@ function showScreen(id) {
   if (id === "profileScreen") {
     $("profileInput").value = state.profile;
   }
-}
-
-function showJoinScreen(roomId = "") {
-  const normalized = normalizeRoomId(roomId);
-  $("roomCodeInput").value = normalized;
-  $("joinTitle").textContent = normalized ? "INVITACION A LLAMADA" : "UNIRSE A LLAMADA";
-  $("joinHint").textContent = normalized
-    ? `Has recibido una invitacion para la sala ${normalized}. Pulsa aceptar para activar camara y microfono.`
-    : "Introduce el codigo corto de sala o abre el enlace de invitacion que te enviaron.";
-  showScreen("joinScreen");
 }
 
 function showMsg(id, type, text) {
@@ -97,46 +72,55 @@ function saveProfile() {
 }
 
 function getDisplayName() {
-  if (state.profile) return state.profile;
-  return state.role === "creator" ? "Creador" : "Invitado";
+  return state.profile || (state.role === "creator" ? "Creador" : "Invitado");
+}
+
+function usePublicStun() {
+  const box = state.role === "guest" ? $("joinUsePublicStun") : $("usePublicStun");
+  return Boolean(box?.checked);
 }
 
 function getRtcConfig() {
-  const checkbox = state.role === "guest" ? $("joinUsePublicStun") : $("usePublicStun");
-  return checkbox?.checked ? RTC_CONFIG : { iceServers: [] };
-}
-
-function normalizeRoomId(value) {
-  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  // STUN ayuda a descubrir rutas entre redes distintas.
+  // STUN no crea salas, no sustituye la senalizacion y no retransmite audio/video.
+  // Sin TURN, WebRTC puede fallar en redes restrictivas. Esta app no usa TURN de pago.
+  return usePublicStun()
+    ? { iceServers: [{ urls: PUBLIC_STUN_SERVER }] }
+    : { iceServers: [] };
 }
 
 function mediaErrorMessage(err) {
   const name = err?.name || "";
 
   if (!window.isSecureContext) {
-    return "La camara y el microfono requieren HTTPS. GitHub Pages usa HTTPS; en local usa localhost.";
+    return "Camara y microfono requieren HTTPS. GitHub Pages usa HTTPS; en local usa localhost.";
   }
 
   if (name === "NotAllowedError" || name === "SecurityError") {
-    return "Permisos de camara/microfono denegados.";
+    return "Has denegado permisos de camara o microfono. Activalos desde el navegador.";
   }
 
   if (name === "NotFoundError" || name === "DevicesNotFoundError") {
     return "No se encontro camara o microfono disponible.";
   }
 
-  if (name === "NotReadableError") {
-    return "La camara o el microfono estan siendo usados por otra aplicacion.";
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "La camara o el microfono parecen estar siendo usados por otra aplicacion.";
   }
 
   return "No se pudo acceder a camara/microfono. Revisa permisos y vuelve a intentarlo.";
+}
+
+function friendlyErrorMessage(err) {
+  if (err?.name) return mediaErrorMessage(err);
+  return err?.message || "Ha ocurrido un error inesperado.";
 }
 
 async function ensureLocalMedia() {
   if (state.localStream) return state.localStream;
 
   if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Este navegador no soporta getUserMedia.");
+    throw new Error("Este navegador no soporta camara/microfono desde la web.");
   }
 
   const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -148,20 +132,34 @@ async function ensureLocalMedia() {
   return stream;
 }
 
+function prepareCallScreen(role) {
+  state.role = role;
+  $("localNameLabel").textContent = getDisplayName();
+  $("remoteNameLabel").textContent = "Otra persona";
+  $("remoteVideo").srcObject = null;
+  $("waitingPanel").classList.remove("hidden");
+  $("camOffMsg").classList.toggle("hidden", state.camEnabled);
+  $("invitePanel").classList.toggle("hidden", role !== "creator");
+  $("creatorAnswerPanel").classList.toggle("hidden", role !== "creator");
+  $("answerPanel").classList.toggle("hidden", role !== "guest");
+  $("inviteLink").value = "";
+  $("answerCode").value = "";
+  $("creatorAnswerCode").value = "";
+  clearMsg("roomMsg");
+  showScreen("roomScreen");
+}
+
 function createPeerConnection() {
   closePeer();
 
   const pc = new RTCPeerConnection(getRtcConfig());
   state.peer = pc;
   state.remoteStream = new MediaStream();
-  state.pendingCandidates = [];
-  state.hasRemoteDescription = false;
   $("remoteVideo").srcObject = state.remoteStream;
 
-  pc.onicecandidate = event => {
-    if (event.candidate) {
-      sendSignal("ice-candidate", { candidate: event.candidate.toJSON() });
-    }
+  pc.onicecandidate = () => {
+    // Trickle ICE esta desactivado en la practica: esperamos a que ICE termine
+    // y metemos los candidatos dentro de la invitacion/respuesta.
   };
 
   pc.ontrack = event => {
@@ -183,14 +181,14 @@ function createPeerConnection() {
       $("waitingPanel").classList.add("hidden");
     }
 
-    if (pc.connectionState === "failed") {
-      setStatus("No se pudo establecer WebRTC. Prueba otra red o activa STUN.", "error");
+    if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      setStatus("No se pudo mantener WebRTC. Prueba STUN o una red menos restrictiva.", "error");
     }
   };
 
   pc.oniceconnectionstatechange = () => {
     if (pc.iceConnectionState === "failed") {
-      setStatus("No se pudo establecer WebRTC. Prueba otra red o activa STUN.", "error");
+      setStatus("No se pudo establecer WebRTC. Sin TURN algunas redes no conectan.", "error");
     }
   };
 
@@ -208,349 +206,259 @@ function closePeer() {
   }
   state.peer = null;
   state.remoteStream = null;
-  state.pendingCandidates = [];
-  state.hasRemoteDescription = false;
-}
-
-function prepareCallScreen(role) {
-  state.role = role;
-  state.isLeaving = false;
-  $("localNameLabel").textContent = getDisplayName();
-  $("remoteNameLabel").textContent = "Otra persona";
-  $("remoteVideo").srcObject = null;
-  $("waitingPanel").classList.remove("hidden");
-  $("invitePanel").classList.toggle("hidden", role !== "creator");
-  $("roomCodeDisplay").textContent = "----";
-  $("inviteLink").value = "";
-  showScreen("roomScreen");
-}
-
-function resolveSignalingUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const rawUrl = params.get("server") || SIGNALING_SERVER_URL;
-  const url = new URL(rawUrl, window.location.href);
-
-  if (url.protocol !== "ws:" && url.protocol !== "wss:") {
-    throw new Error("La URL del servidor de salas debe empezar por ws:// o wss://.");
-  }
-
-  return url.href;
-}
-
-function connectSignaling() {
-  if (state.ws?.readyState === WebSocket.OPEN) return Promise.resolve(state.ws);
-
-  return new Promise((resolve, reject) => {
-    let url;
-    try {
-      url = resolveSignalingUrl();
-    } catch (err) {
-      reject(err);
-      return;
-    }
-
-    const ws = new WebSocket(url);
-    state.ws = ws;
-
-    let settled = false;
-    const timeoutId = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      ws.close();
-      reject(new Error("No se pudo conectar con el servidor de salas."));
-    }, 8000);
-
-    ws.onopen = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutId);
-      resolve(ws);
-    };
-
-    ws.onmessage = event => {
-      handleSignalingMessage(event.data).catch(() => {
-        setStatus("Mensaje de senalizacion invalido.", "error");
-      });
-    };
-
-    ws.onerror = () => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timeoutId);
-        reject(new Error("No se pudo conectar con el servidor de salas."));
-      }
-    };
-
-    ws.onclose = () => {
-      clearTimeout(timeoutId);
-      if (state.ws === ws) state.ws = null;
-      if (!state.isLeaving && state.roomId) {
-        setStatus("Modo automatico no disponible. El servidor de salas no esta conectado.", "error");
-      }
-    };
-  });
-}
-
-function sendSignal(type, payload = {}) {
-  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-    setStatus("Modo automatico no disponible. El servidor de salas no esta conectado.", "error");
-    return false;
-  }
-
-  state.ws.send(JSON.stringify({
-    type,
-    roomId: state.roomId,
-    name: getDisplayName(),
-    ...payload,
-  }));
-  return true;
 }
 
 async function createRoom() {
   clearMsg("createMsg");
-  prepareCallScreen("creator");
-  setStatus("Conectando con el servidor de salas...", "info");
+  state.role = "creator";
 
   try {
-    await connectSignaling();
-    sendSignal("create-room");
+    showMsg("createMsg", "success", "Pidiendo camara y microfono...");
+    await ensureLocalMedia();
+    prepareCallScreen("creator");
+    setStatus("Generando invitacion. Espera unos segundos...", "info");
+
+    const pc = createPeerConnection();
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(pc);
+
+    const inviteCode = await encodeSignal({
+      kind: "invite",
+      name: getDisplayName(),
+      createdAt: Date.now(),
+      usesPublicStun: usePublicStun(),
+      description: pc.localDescription,
+    });
+
+    const link = buildInviteLink(inviteCode);
+    $("inviteLink").value = link;
+    $("invitePanel").classList.remove("hidden");
+    setStatus("Invitacion generada. Copia este enlace y mandaselo a la otra persona.", "success");
   } catch (err) {
-    setStatus(err.message || "No se pudo conectar con el servidor de salas.", "error");
-    showMsg("createMsg", "error", "Modo automatico no disponible. El servidor de salas no esta conectado.");
+    const message = friendlyErrorMessage(err);
+    showMsg("createMsg", "error", message);
+    setStatus(message, "error");
   }
+}
+
+function buildInviteLink(inviteCode) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+
+  // Respeta rutas de repositorio como /LaFeria/. Si se abre /LaFeria/index.html,
+  // deja el enlace limpio en /LaFeria/#invite=...
+  url.pathname = url.pathname.replace(/index\.html$/i, "");
+  url.hash = `invite=${encodeURIComponent(inviteCode)}`;
+  return url.toString();
+}
+
+function showJoinScreen() {
+  $("incomingInviteCode").value = state.pendingInviteCode || "";
+  $("joinTitle").textContent = state.pendingInviteCode ? "INVITACION DETECTADA" : "UNIRSE A LLAMADA";
+  $("joinHint").textContent = state.pendingInviteCode
+    ? "Invitacion detectada. Pulsa aceptar llamada para generar tu respuesta de aceptacion."
+    : "Pega aqui el enlace o codigo de invitacion que te mandaron.";
+  clearMsg("joinMsg");
+  if (state.pendingInviteCode) {
+    showMsg("joinMsg", "success", "Invitacion detectada. Pulsa aceptar llamada.");
+  }
+  showScreen("joinScreen");
 }
 
 async function acceptCall() {
   clearMsg("joinMsg");
-  const roomId = normalizeRoomId($("roomCodeInput").value);
-
-  if (!roomId) {
-    showMsg("joinMsg", "error", "Introduce un codigo de sala.");
-    return;
-  }
-
-  prepareCallScreen("guest");
-  state.roomId = roomId;
-  $("roomCodeDisplay").textContent = roomId;
-  setStatus("Solicitando permisos de camara y microfono...", "info");
+  state.role = "guest";
 
   try {
+    const inviteCode = extractInviteCode($("incomingInviteCode").value || state.pendingInviteCode);
+    if (!inviteCode) throw new Error("Codigo de invitacion no valido o incompleto.");
+
+    const invite = await decodeSignal(inviteCode);
+    if (invite.kind !== "invite" || !invite.description?.sdp) {
+      throw new Error("Codigo de invitacion no valido o incompleto.");
+    }
+
+    showMsg("joinMsg", "success", "Pidiendo camara y microfono...");
     await ensureLocalMedia();
-  } catch (err) {
-    setStatus(mediaErrorMessage(err), "error");
-    return;
-  }
+    prepareCallScreen("guest");
+    $("remoteNameLabel").textContent = invite.name || "Creador";
+    setStatus("Generando respuesta de aceptacion...", "info");
 
-  try {
-    setStatus("Conectando con el servidor de salas...", "info");
-    await connectSignaling();
-    sendSignal("join", { roomId });
-  } catch (err) {
-    setStatus(err.message || "No se pudo conectar con el servidor de salas.", "error");
-  }
-}
-
-async function handleSignalingMessage(raw) {
-  const msg = JSON.parse(raw);
-
-  if (msg.type === "created") {
-    await handleRoomCreated(msg);
-    return;
-  }
-
-  if (msg.type === "joined") {
-    state.role = msg.role || state.role;
-    state.roomId = msg.roomId || state.roomId;
-    $("roomCodeDisplay").textContent = state.roomId;
-    setStatus("Esperando a la otra persona...", "info");
-    return;
-  }
-
-  if (msg.type === "ready") {
-    setRemoteName(msg.peerName);
-    setStatus("Hay dos personas en la sala. Conectando...", "info");
-    if (state.role === "creator") await startCreatorOffer();
-    return;
-  }
-
-  if (msg.type === "offer") {
-    await handleOffer(msg);
-    return;
-  }
-
-  if (msg.type === "answer") {
-    await handleAnswer(msg);
-    return;
-  }
-
-  if (msg.type === "ice-candidate") {
-    await handleRemoteCandidate(msg.candidate);
-    return;
-  }
-
-  if (msg.type === "leave") {
-    setStatus("La otra persona salio de la llamada.", "error");
-    $("waitingPanel").classList.remove("hidden");
-    closePeer();
-    return;
-  }
-
-  if (msg.type === "error") {
-    handleServerError(msg);
-  }
-}
-
-async function handleRoomCreated(msg) {
-  state.roomId = normalizeRoomId(msg.roomId);
-  $("roomCodeDisplay").textContent = state.roomId;
-  state.inviteLink = buildInvitationLink(state.roomId);
-  $("inviteLink").value = state.inviteLink;
-  $("invitePanel").classList.remove("hidden");
-  setStatus("Sala creada. Copia la invitacion y espera en la sala.", "success");
-
-  try {
-    await ensureLocalMedia();
-    setStatus("Sala lista. Esperando a la otra persona...", "info");
-  } catch (err) {
-    setStatus(mediaErrorMessage(err), "error");
-    sendSignal("leave");
-    state.isLeaving = true;
-    state.ws?.close(1000, "media denied");
-    state.roomId = "";
-    state.inviteLink = "";
-    $("invitePanel").classList.add("hidden");
-  }
-}
-
-function buildInvitationLink(roomId) {
-  const current = new URL(window.location.href);
-  current.searchParams.set("room", roomId);
-
-  const serverOverride = new URLSearchParams(window.location.search).get("server");
-  if (serverOverride) current.searchParams.set("server", serverOverride);
-
-  return current.href;
-}
-
-async function startCreatorOffer() {
-  try {
-    await ensureLocalMedia();
     const pc = createPeerConnection();
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    sendSignal("offer", { description: pc.localDescription });
-    setStatus("Oferta enviada. Esperando respuesta...", "info");
-  } catch (err) {
-    setStatus(mediaErrorMessage(err), "error");
-  }
-}
-
-async function handleOffer(msg) {
-  try {
-    setRemoteName(msg.name);
-    await ensureLocalMedia();
-    const pc = createPeerConnection();
-    await pc.setRemoteDescription(new RTCSessionDescription(msg.description));
-    state.hasRemoteDescription = true;
-    await flushPendingCandidates();
-
+    await pc.setRemoteDescription(new RTCSessionDescription(invite.description));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    sendSignal("answer", { description: pc.localDescription });
-    setStatus("Respuesta enviada. Conectando WebRTC...", "info");
+    await waitForIceGatheringComplete(pc);
+
+    const answerCode = await encodeSignal({
+      kind: "answer",
+      name: getDisplayName(),
+      createdAt: Date.now(),
+      usesPublicStun: usePublicStun(),
+      description: pc.localDescription,
+    });
+
+    $("answerCode").value = answerCode;
+    $("answerPanel").classList.remove("hidden");
+    setStatus("Respuesta generada. Devuelvesela al creador para completar la conexion.", "success");
   } catch (err) {
-    setStatus(mediaErrorMessage(err), "error");
+    const message = friendlyErrorMessage(err);
+    showMsg("joinMsg", "error", message);
+    setStatus(message, "error");
   }
 }
 
-async function handleAnswer(msg) {
-  if (!state.peer) return;
+async function completeConnection() {
+  clearMsg("roomMsg");
 
   try {
-    setRemoteName(msg.name);
-    await state.peer.setRemoteDescription(new RTCSessionDescription(msg.description));
-    state.hasRemoteDescription = true;
-    await flushPendingCandidates();
-    setStatus("Respuesta recibida. Conectando WebRTC...", "info");
+    if (!state.peer) throw new Error("Primero crea una invitacion.");
+
+    const answerCode = extractInviteCode($("creatorAnswerCode").value);
+    if (!answerCode) throw new Error("Pega la respuesta de aceptacion completa.");
+
+    const answer = await decodeSignal(answerCode);
+    if (answer.kind !== "answer" || !answer.description?.sdp) {
+      throw new Error("Respuesta de aceptacion no valida o incompleta.");
+    }
+
+    $("remoteNameLabel").textContent = answer.name || "Otra persona";
+    await state.peer.setRemoteDescription(new RTCSessionDescription(answer.description));
+    setStatus("Respuesta aplicada. Conectando WebRTC...", "info");
+    showMsg("roomMsg", "success", "Respuesta aplicada. La llamada deberia conectar en unos segundos.");
   } catch (err) {
-    setStatus("No se pudo establecer WebRTC. Prueba otra red o activa STUN.", "error");
+    showMsg("roomMsg", "error", err.message || "No se pudo aplicar la respuesta.");
   }
 }
 
-async function handleRemoteCandidate(candidate) {
-  if (!candidate || !state.peer) return;
-
-  if (!state.hasRemoteDescription) {
-    state.pendingCandidates.push(candidate);
-    return;
-  }
+function extractInviteCode(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
 
   try {
-    await state.peer.addIceCandidate(new RTCIceCandidate(candidate));
+    const url = new URL(text);
+    const hashInvite = new URLSearchParams(url.hash.replace(/^#/, "")).get("invite");
+    const queryInvite = url.searchParams.get("invite");
+    return hashInvite || queryInvite || "";
   } catch (err) {
-    setStatus("No se pudo establecer WebRTC. Prueba otra red o activa STUN.", "error");
+    if (text.startsWith("#invite=")) {
+      return new URLSearchParams(text.replace(/^#/, "")).get("invite") || "";
+    }
+    return text;
   }
 }
 
-async function flushPendingCandidates() {
-  if (!state.peer || !state.hasRemoteDescription) return;
+function waitForIceGatheringComplete(pc) {
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
 
-  const candidates = state.pendingCandidates.splice(0);
-  for (const candidate of candidates) {
-    await state.peer.addIceCandidate(new RTCIceCandidate(candidate));
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      pc.removeEventListener("icegatheringstatechange", onChange);
+      resolve();
+    };
+    const onChange = () => {
+      if (pc.iceGatheringState === "complete") finish();
+    };
+
+    pc.addEventListener("icegatheringstatechange", onChange);
+    setTimeout(finish, 9000);
+  });
+}
+
+async function encodeSignal(data) {
+  const json = JSON.stringify(data);
+
+  if ("CompressionStream" in window) {
+    try {
+      const compressed = await compressText(json);
+      return `${SIGNAL_COMPRESSED_PREFIX}.${bytesToBase64Url(compressed)}`;
+    } catch (err) {
+      // Si la compresion falla, caemos a texto normal codificado.
+    }
   }
+
+  return `${SIGNAL_PREFIX}.${bytesToBase64Url(new TextEncoder().encode(json))}`;
 }
 
-function handleServerError(msg) {
-  const messages = {
-    "room-not-found": "La sala no existe o ha caducado.",
-    "room-full": "La sala ya esta llena.",
-    "invalid-message": "Mensaje de sala invalido.",
-    "server-unavailable": "No se pudo conectar con el servidor de salas.",
-  };
-  setStatus(messages[msg.code] || msg.message || "Error del servidor de salas.", "error");
+async function decodeSignal(code) {
+  const clean = String(code || "").trim();
+  const [prefix, payload] = clean.split(".", 2);
+  if (!payload || ![SIGNAL_PREFIX, SIGNAL_COMPRESSED_PREFIX].includes(prefix)) {
+    throw new Error("Codigo de invitacion no valido o incompleto.");
+  }
+
+  const bytes = base64UrlToBytes(payload);
+  const json = prefix === SIGNAL_COMPRESSED_PREFIX
+    ? await decompressText(bytes)
+    : new TextDecoder().decode(bytes);
+
+  return JSON.parse(json);
 }
 
-function setRemoteName(name) {
-  if (name) $("remoteNameLabel").textContent = name;
+async function compressText(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  const buffer = await new Response(stream).arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
+async function decompressText(bytes) {
+  if (!("DecompressionStream" in window)) {
+    throw new Error("Tu navegador no puede leer este codigo comprimido. Pide a la otra persona que genere el enlace desde un navegador compatible.");
+  }
+
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).text();
+}
+
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlToBytes(value) {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 async function copyInvitation() {
-  const value = $("inviteLink")?.value.trim();
+  await copyTextFromInput("inviteLink", "Invitacion copiada. Mandasela a la otra persona.");
+}
+
+async function copyAnswer() {
+  await copyTextFromInput("answerCode", "Respuesta copiada. Devuelvesela al creador.");
+}
+
+async function copyTextFromInput(id, successText) {
+  const input = $(id);
+  const value = input?.value.trim();
   if (!value) {
-    setStatus("Todavia no hay invitacion para copiar.", "error");
+    showMsg("roomMsg", "error", "Todavia no hay nada para copiar.");
     return;
   }
 
   try {
     await navigator.clipboard.writeText(value);
-    setStatus("Invitacion copiada.", "success");
+    showMsg("roomMsg", "success", successText);
   } catch (err) {
-    $("inviteLink").focus();
-    $("inviteLink").select();
+    input.focus();
+    input.select();
     document.execCommand("copy");
-    setStatus("Invitacion seleccionada. Si no se copio, pulsa Ctrl+C.", "info");
+    showMsg("roomMsg", "success", successText);
   }
-}
-
-function toggleMic() {
-  state.micEnabled = !state.micEnabled;
-  state.localStream?.getAudioTracks().forEach(track => { track.enabled = state.micEnabled; });
-  updateControls();
-}
-
-function toggleCam() {
-  state.camEnabled = !state.camEnabled;
-  state.localStream?.getVideoTracks().forEach(track => { track.enabled = state.camEnabled; });
-  $("camOffMsg").classList.toggle("hidden", state.camEnabled);
-  updateControls();
-}
-
-function updateControls() {
-  $("micLabel").textContent = state.micEnabled ? "Micro activo" : "Micro silenciado";
-  $("camLabel").textContent = state.camEnabled ? "Camara activa" : "Camara apagada";
-  $("btnMic").classList.toggle("muted-state", !state.micEnabled);
-  $("btnCam").classList.toggle("muted-state", !state.camEnabled);
 }
 
 function toggleSettingsPanel() {
@@ -561,54 +469,56 @@ function closeSettingsPanel() {
   $("settingsPanel").classList.add("hidden");
 }
 
-function leaveRoom() {
-  state.isLeaving = true;
-  if (state.ws?.readyState === WebSocket.OPEN) {
-    sendSignal("leave");
-    state.ws.close(1000, "leave");
-  }
+function toggleMic() {
+  if (!state.localStream) return;
+  state.micEnabled = !state.micEnabled;
+  state.localStream.getAudioTracks().forEach(track => { track.enabled = state.micEnabled; });
+  updateControls();
+}
 
+function toggleCam() {
+  if (!state.localStream) return;
+  state.camEnabled = !state.camEnabled;
+  state.localStream.getVideoTracks().forEach(track => { track.enabled = state.camEnabled; });
+  $("camOffMsg").classList.toggle("hidden", state.camEnabled);
+  updateControls();
+}
+
+function updateControls() {
+  $("btnMic")?.classList.toggle("muted-state", !state.micEnabled);
+  $("btnMic")?.classList.toggle("active", state.micEnabled);
+  $("btnCam")?.classList.toggle("muted-state", !state.camEnabled);
+  $("btnCam")?.classList.toggle("active", state.camEnabled);
+  if ($("micLabel")) $("micLabel").textContent = state.micEnabled ? "Micro activo" : "Micro silenciado";
+  if ($("camLabel")) $("camLabel").textContent = state.camEnabled ? "Camara activa" : "Camara apagada";
+}
+
+function leaveRoom() {
+  closeSettingsPanel();
   closePeer();
   state.localStream?.getTracks().forEach(track => track.stop());
   state.localStream = null;
+  state.remoteStream = null;
   state.role = "";
-  state.roomId = "";
-  state.inviteLink = "";
-
   $("localVideo").srcObject = null;
   $("remoteVideo").srcObject = null;
-  $("inviteLink").value = "";
-  $("roomCodeDisplay").textContent = "----";
-  $("camOffMsg").classList.add("hidden");
-  closeSettingsPanel();
-  removeRoomFromUrl();
+  $("waitingPanel").classList.remove("hidden");
   showScreen("menuScreen");
 }
 
-function removeRoomFromUrl() {
-  const url = new URL(window.location.href);
-  if (!url.searchParams.has("room")) return;
-  url.searchParams.delete("room");
-  window.history.replaceState({}, "", url.href);
+function readInviteFromUrl() {
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const invite = params.get("invite") || new URLSearchParams(window.location.search).get("invite") || "";
+  if (!invite) return;
+
+  state.pendingInviteCode = invite;
+  showJoinScreen();
 }
 
-document.addEventListener("keydown", event => {
-  if (event.key === "Escape") closeSettingsPanel();
-});
-
-$("roomCodeInput")?.addEventListener("input", event => {
-  event.target.value = normalizeRoomId(event.target.value);
-});
-
 window.addEventListener("beforeunload", () => {
-  if (state.ws?.readyState === WebSocket.OPEN) {
-    sendSignal("leave");
-  }
+  state.localStream?.getTracks().forEach(track => track.stop());
+  closePeer();
 });
 
 updateProfileBadge();
-
-const initialRoomId = new URLSearchParams(window.location.search).get("room");
-if (initialRoomId) {
-  showJoinScreen(initialRoomId);
-}
+readInviteFromUrl();

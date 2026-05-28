@@ -629,6 +629,16 @@ textarea:focus {
   font-size: 0.86rem;
 }
 
+.stack-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.stack-panel .join-hint {
+  margin-bottom: 0;
+}
+
 @media (max-width: 760px) {
   .screen {
     padding: 14px;

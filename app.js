@@ -15,6 +15,12 @@ const state = {
   micEnabled: true,
   camEnabled: true,
   pendingInviteCode: "",
+  cameraId: "",
+  microphoneId: "",
+  speakerId: "",
+  videoDevices: [],
+  audioDevices: [],
+  speakerDevices: [],
 };
 
 function $(id) {
@@ -117,19 +123,141 @@ function friendlyErrorMessage(err) {
 }
 
 async function ensureLocalMedia() {
-  if (state.localStream) return state.localStream;
+  return tryStartLocalMedia();
+}
+
+async function tryStartLocalMedia() {
+  if (state.localStream?.getTracks().length) return state.localStream;
 
   if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Este navegador no soporta camara/microfono desde la web.");
+    setLocalStream(null);
+    showSoftDeviceWarning("Este navegador no permite usar camara/microfono, pero puedes continuar sin dispositivos.");
+    return null;
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  const attempts = [
+    {
+      constraints: {
+        video: state.cameraId ? { deviceId: { exact: state.cameraId } } : true,
+        audio: state.microphoneId ? { deviceId: { exact: state.microphoneId } } : true,
+      },
+      message: "",
+    },
+    {
+      constraints: { video: state.cameraId ? { deviceId: { exact: state.cameraId } } : true, audio: false },
+      message: "Microfono no disponible. Puedes continuar sin microfono.",
+    },
+    {
+      constraints: { video: false, audio: state.microphoneId ? { deviceId: { exact: state.microphoneId } } : true },
+      message: "Camara no disponible. Puedes continuar sin camara.",
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(attempt.constraints);
+      setLocalStream(stream);
+      await loadDeviceList();
+      if (attempt.message) showSoftDeviceWarning(attempt.message);
+      return stream;
+    } catch (err) {
+      // Seguimos probando combinaciones mas pequenas. La sala no depende de esto.
+    }
+  }
+
+  setLocalStream(null);
+  await loadDeviceList();
+  showSoftDeviceWarning("No se pudo acceder a camara ni microfono. La sala se creara igualmente; podras escuchar/ver si la otra persona comparte.");
+  return null;
+}
+
+function showSoftDeviceWarning(text) {
+  if (state.role === "creator") {
+    showMsg("createMsg", "success", text);
+  } else if (state.role === "guest") {
+    showMsg("joinMsg", "success", text);
+  }
+  setStatus(text, "info");
+}
+
+function setLocalStream(stream) {
+  if (state.localStream && state.localStream !== stream) {
+    state.localStream.getTracks().forEach(track => track.stop());
+  }
+
   state.localStream = stream;
-  state.micEnabled = stream.getAudioTracks().some(track => track.enabled);
-  state.camEnabled = stream.getVideoTracks().some(track => track.enabled);
+  state.micEnabled = Boolean(stream?.getAudioTracks().length);
+  state.camEnabled = Boolean(stream?.getVideoTracks().length);
+  state.cameraId = state.cameraId || stream?.getVideoTracks()[0]?.getSettings?.().deviceId || "";
+  state.microphoneId = state.microphoneId || stream?.getAudioTracks()[0]?.getSettings?.().deviceId || "";
   $("localVideo").srcObject = stream;
+  $("camOffMsg").classList.toggle("hidden", state.camEnabled);
   updateControls();
-  return stream;
+}
+
+async function loadDeviceList() {
+  const cameraSelect = $("cameraSelect");
+  const microphoneSelect = $("microphoneSelect");
+  const speakerSelect = $("speakerSelect");
+  const speakerGroup = $("speakerGroup");
+
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    fillDeviceSelect(cameraSelect, [], "Camara no disponible", "");
+    fillDeviceSelect(microphoneSelect, [], "Microfono no disponible", "");
+    speakerGroup?.classList.add("hidden");
+    return;
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const counts = { videoinput: 0, audioinput: 0, audiooutput: 0 };
+
+    state.videoDevices = [];
+    state.audioDevices = [];
+    state.speakerDevices = [];
+
+    devices.forEach(device => {
+      if (!["videoinput", "audioinput", "audiooutput"].includes(device.kind)) return;
+      counts[device.kind] += 1;
+      const item = {
+        id: device.deviceId,
+        label: device.label || fallbackDeviceLabel(device.kind, counts[device.kind]),
+      };
+
+      if (device.kind === "videoinput") state.videoDevices.push(item);
+      if (device.kind === "audioinput") state.audioDevices.push(item);
+      if (device.kind === "audiooutput") state.speakerDevices.push(item);
+    });
+
+    fillDeviceSelect(cameraSelect, state.videoDevices, "Camara predeterminada", state.cameraId);
+    fillDeviceSelect(microphoneSelect, state.audioDevices, "Microfono predeterminado", state.microphoneId);
+
+    const canChooseSpeaker = typeof $("remoteVideo")?.setSinkId === "function";
+    speakerGroup?.classList.toggle("hidden", !canChooseSpeaker);
+    if (canChooseSpeaker) {
+      fillDeviceSelect(speakerSelect, state.speakerDevices, "Salida del sistema", state.speakerId);
+    }
+  } catch (err) {
+    fillDeviceSelect(cameraSelect, [], "Camara 1", "");
+    fillDeviceSelect(microphoneSelect, [], "Microfono 1", "");
+    speakerGroup?.classList.add("hidden");
+  }
+}
+
+function fallbackDeviceLabel(kind, index) {
+  if (kind === "videoinput") return `Camara ${index}`;
+  if (kind === "audioinput") return `Microfono ${index}`;
+  return index === 1 ? "Salida del sistema" : `Salida de audio ${index}`;
+}
+
+function fillDeviceSelect(select, devices, defaultLabel, selectedId) {
+  if (!select) return;
+  select.innerHTML = "";
+  select.appendChild(new Option(defaultLabel, ""));
+  devices.forEach(device => select.appendChild(new Option(device.label, device.id)));
+  if (selectedId && devices.some(device => device.id === selectedId)) {
+    select.value = selectedId;
+  }
 }
 
 function prepareCallScreen(role) {
@@ -138,6 +266,7 @@ function prepareCallScreen(role) {
   $("remoteNameLabel").textContent = "Otra persona";
   $("remoteVideo").srcObject = null;
   $("waitingPanel").classList.remove("hidden");
+  $("camOffMsg").textContent = state.camEnabled ? "Camara activa" : "Camara apagada o no disponible.";
   $("camOffMsg").classList.toggle("hidden", state.camEnabled);
   $("invitePanel").classList.toggle("hidden", role !== "creator");
   $("creatorAnswerPanel").classList.toggle("hidden", role !== "creator");
@@ -147,6 +276,7 @@ function prepareCallScreen(role) {
   $("creatorAnswerCode").value = "";
   clearMsg("roomMsg");
   showScreen("roomScreen");
+  loadDeviceList();
 }
 
 function createPeerConnection() {
@@ -168,6 +298,7 @@ function createPeerConnection() {
         state.remoteStream.addTrack(track);
       }
     });
+    applySpeakerOutput(false);
     $("waitingPanel").classList.add("hidden");
   };
 
@@ -192,7 +323,21 @@ function createPeerConnection() {
     }
   };
 
-  state.localStream.getTracks().forEach(track => pc.addTrack(track, state.localStream));
+  const audioTrack = state.localStream?.getAudioTracks()[0];
+  const videoTrack = state.localStream?.getVideoTracks()[0];
+
+  if (audioTrack) {
+    pc.addTrack(audioTrack, state.localStream);
+  } else {
+    pc.addTransceiver("audio", { direction: "sendrecv" });
+  }
+
+  if (videoTrack) {
+    pc.addTrack(videoTrack, state.localStream);
+  } else {
+    pc.addTransceiver("video", { direction: "sendrecv" });
+  }
+
   return pc;
 }
 
@@ -211,12 +356,19 @@ function closePeer() {
 async function createRoom() {
   clearMsg("createMsg");
   state.role = "creator";
+  const createButton = $("createRoomButton");
 
   try {
-    showMsg("createMsg", "success", "Pidiendo camara y microfono...");
-    await ensureLocalMedia();
+    if (createButton) {
+      createButton.disabled = true;
+      createButton.textContent = "Creando sala...";
+    }
+    showMsg("createMsg", "success", "Preparando invitacion...");
     prepareCallScreen("creator");
-    setStatus("Generando invitacion. Espera unos segundos...", "info");
+    setStatus("Intentando activar camara y microfono...", "info");
+    await tryStartLocalMedia();
+    prepareCallScreen("creator");
+    setStatus("Generando conexion, espera unos segundos...", "info");
 
     const pc = createPeerConnection();
     const offer = await pc.createOffer();
@@ -239,6 +391,11 @@ async function createRoom() {
     const message = friendlyErrorMessage(err);
     showMsg("createMsg", "error", message);
     setStatus(message, "error");
+  } finally {
+    if (createButton) {
+      createButton.disabled = false;
+      createButton.textContent = "Crear sala";
+    }
   }
 }
 
@@ -280,9 +437,11 @@ async function acceptCall() {
       throw new Error("Codigo de invitacion no valido o incompleto.");
     }
 
-    showMsg("joinMsg", "success", "Pidiendo camara y microfono...");
-    await ensureLocalMedia();
+    showMsg("joinMsg", "success", "Preparando respuesta de aceptacion...");
     prepareCallScreen("guest");
+    $("remoteNameLabel").textContent = invite.name || "Creador";
+    setStatus("Intentando activar camara y microfono...", "info");
+    await tryStartLocalMedia();
     $("remoteNameLabel").textContent = invite.name || "Creador";
     setStatus("Generando respuesta de aceptacion...", "info");
 
@@ -461,6 +620,126 @@ async function copyTextFromInput(id, successText) {
   }
 }
 
+async function activateCamera() {
+  await changeCamera($("cameraSelect")?.value || "");
+}
+
+async function activateMicrophone() {
+  await changeMicrophone($("microphoneSelect")?.value || "");
+}
+
+async function changeCamera(deviceId) {
+  state.cameraId = deviceId;
+
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Este navegador no permite usar camara/microfono.");
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: deviceId ? { deviceId: { exact: deviceId } } : true,
+      audio: false,
+    });
+    const [newTrack] = stream.getVideoTracks();
+    if (!newTrack) throw new Error("Camara no disponible. Puedes continuar sin camara.");
+
+    ensureEditableLocalStream();
+    replaceLocalTrack("video", newTrack);
+    await replacePeerTrack("video", newTrack);
+    state.camEnabled = true;
+    $("localVideo").srcObject = state.localStream;
+    $("camOffMsg").classList.add("hidden");
+    await loadDeviceList();
+    updateControls();
+    setStatus("Camara activada.", "success");
+  } catch (err) {
+    state.camEnabled = Boolean(state.localStream?.getVideoTracks().length);
+    updateControls();
+    setStatus("Camara no disponible. Puedes continuar sin camara.", "error");
+  }
+}
+
+async function changeMicrophone(deviceId) {
+  state.microphoneId = deviceId;
+
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Este navegador no permite usar camara/microfono.");
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: false,
+      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+    });
+    const [newTrack] = stream.getAudioTracks();
+    if (!newTrack) throw new Error("Microfono no disponible. Puedes continuar sin microfono.");
+
+    ensureEditableLocalStream();
+    replaceLocalTrack("audio", newTrack);
+    await replacePeerTrack("audio", newTrack);
+    state.micEnabled = true;
+    await loadDeviceList();
+    updateControls();
+    setStatus("Microfono activado.", "success");
+  } catch (err) {
+    state.micEnabled = Boolean(state.localStream?.getAudioTracks().length);
+    updateControls();
+    setStatus("Microfono no disponible. Puedes continuar sin microfono.", "error");
+  }
+}
+
+function ensureEditableLocalStream() {
+  if (!state.localStream) {
+    state.localStream = new MediaStream();
+    $("localVideo").srcObject = state.localStream;
+  }
+  return state.localStream;
+}
+
+function replaceLocalTrack(kind, newTrack) {
+  const oldTracks = state.localStream.getTracks().filter(track => track.kind === kind);
+  oldTracks.forEach(track => {
+    state.localStream.removeTrack(track);
+    track.stop();
+  });
+  state.localStream.addTrack(newTrack);
+}
+
+async function replacePeerTrack(kind, newTrack) {
+  if (!state.peer) return;
+
+  let sender = state.peer.getSenders().find(item => item.track?.kind === kind);
+  if (!sender) {
+    const transceiver = state.peer.getTransceivers().find(item => {
+      return item.sender && (item.sender.track?.kind === kind || item.receiver?.track?.kind === kind);
+    });
+    sender = transceiver?.sender;
+  }
+
+  if (sender) {
+    await sender.replaceTrack(newTrack);
+  } else {
+    state.peer.addTrack(newTrack, state.localStream);
+  }
+}
+
+async function changeSpeaker(deviceId) {
+  state.speakerId = deviceId;
+  await applySpeakerOutput(true);
+}
+
+async function applySpeakerOutput(showFeedback = false) {
+  const remoteVideo = $("remoteVideo");
+  if (!remoteVideo || typeof remoteVideo.setSinkId !== "function") return;
+
+  try {
+    await remoteVideo.setSinkId(state.speakerId);
+    if (showFeedback) setStatus("Salida de audio actualizada.", "success");
+  } catch (err) {
+    if (showFeedback) setStatus("No se pudo cambiar la salida de audio en este navegador.", "error");
+  }
+}
+
 function toggleSettingsPanel() {
   $("settingsPanel").classList.toggle("hidden");
 }
@@ -470,14 +749,20 @@ function closeSettingsPanel() {
 }
 
 function toggleMic() {
-  if (!state.localStream) return;
+  if (!state.localStream?.getAudioTracks().length) {
+    activateMicrophone();
+    return;
+  }
   state.micEnabled = !state.micEnabled;
   state.localStream.getAudioTracks().forEach(track => { track.enabled = state.micEnabled; });
   updateControls();
 }
 
 function toggleCam() {
-  if (!state.localStream) return;
+  if (!state.localStream?.getVideoTracks().length) {
+    activateCamera();
+    return;
+  }
   state.camEnabled = !state.camEnabled;
   state.localStream.getVideoTracks().forEach(track => { track.enabled = state.camEnabled; });
   $("camOffMsg").classList.toggle("hidden", state.camEnabled);
@@ -485,12 +770,17 @@ function toggleCam() {
 }
 
 function updateControls() {
-  $("btnMic")?.classList.toggle("muted-state", !state.micEnabled);
-  $("btnMic")?.classList.toggle("active", state.micEnabled);
-  $("btnCam")?.classList.toggle("muted-state", !state.camEnabled);
-  $("btnCam")?.classList.toggle("active", state.camEnabled);
-  if ($("micLabel")) $("micLabel").textContent = state.micEnabled ? "Micro activo" : "Micro silenciado";
-  if ($("camLabel")) $("camLabel").textContent = state.camEnabled ? "Camara activa" : "Camara apagada";
+  const hasMic = Boolean(state.localStream?.getAudioTracks().length);
+  const hasCam = Boolean(state.localStream?.getVideoTracks().length);
+  const micActive = hasMic && state.micEnabled;
+  const camActive = hasCam && state.camEnabled;
+
+  $("btnMic")?.classList.toggle("muted-state", !micActive);
+  $("btnMic")?.classList.toggle("active", micActive);
+  $("btnCam")?.classList.toggle("muted-state", !camActive);
+  $("btnCam")?.classList.toggle("active", camActive);
+  if ($("micLabel")) $("micLabel").textContent = hasMic ? (state.micEnabled ? "Micro activo" : "Micro silenciado") : "Micro no disponible";
+  if ($("camLabel")) $("camLabel").textContent = hasCam ? (state.camEnabled ? "Camara activa" : "Camara apagada") : "Camara no disponible";
 }
 
 function leaveRoom() {
@@ -519,6 +809,10 @@ window.addEventListener("beforeunload", () => {
   state.localStream?.getTracks().forEach(track => track.stop());
   closePeer();
 });
+
+if (navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener("devicechange", loadDeviceList);
+}
 
 updateProfileBadge();
 readInviteFromUrl();

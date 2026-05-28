@@ -503,7 +503,7 @@ textarea:focus {
 }
 
 .settings-header h2,
-.manual-panel h2 {
+.room-panel h2 {
   font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
   letter-spacing: 0;
 }
@@ -557,7 +557,7 @@ textarea:focus {
   font-size: 0.82rem;
 }
 
-.manual-panel {
+.room-panel {
   grid-column: 1 / -1;
   display: grid;
   gap: 16px;
@@ -587,22 +587,46 @@ textarea:focus {
   border: 1px solid rgba(255, 255, 255, 0.22);
 }
 
-.manual-role-panel {
+.room-invite {
   display: grid;
-  gap: 14px;
-}
-
-.manual-step {
-  display: grid;
-  gap: 10px;
+  grid-template-columns: minmax(100px, auto) 1fr;
+  gap: 16px;
+  align-items: end;
   padding: 14px;
   border: 1px dashed rgba(255, 243, 207, 0.3);
   border-radius: var(--radius);
   background: rgba(0, 0, 0, 0.2);
 }
 
-.manual-step strong {
+.room-code-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.room-code {
+  display: block;
   color: var(--yellow);
+  font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+  font-size: clamp(2rem, 6vw, 3.7rem);
+  letter-spacing: 0;
+  line-height: 0.95;
+}
+
+.invite-link-wrap {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.invite-link {
+  min-width: 0;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.86rem;
 }
 
 @media (max-width: 760px) {
@@ -626,6 +650,11 @@ textarea:focus {
 
   .btn {
     width: 100%;
+  }
+
+  .room-invite,
+  .invite-link-wrap {
+    grid-template-columns: 1fr;
   }
 
   .call-stage {

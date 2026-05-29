@@ -410,16 +410,17 @@ textarea:focus {
 .call-stage {
   position: relative;
   width: 100%;
+  height: 100vh;
   min-height: 100vh;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: minmax(42vh, 1fr) auto;
+  grid-template-rows: 100vh;
   background: #05070d;
 }
 
 .call-tile {
   position: relative;
-  min-height: 42vh;
+  min-height: 100vh;
   overflow: hidden;
   background: linear-gradient(135deg, rgba(255, 37, 87, 0.24), rgba(38, 183, 255, 0.18)), #090b14;
   border-right: 2px solid rgba(255, 255, 255, 0.14);
@@ -433,7 +434,7 @@ textarea:focus {
 .call-tile video {
   width: 100%;
   height: 100%;
-  min-height: 42vh;
+  min-height: 100vh;
   display: block;
   object-fit: cover;
   background: #060812;
@@ -519,8 +520,7 @@ textarea:focus {
   text-transform: uppercase;
 }
 
-.settings-header h2,
-.manual-panel h2 {
+.settings-header h2 {
   font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
   letter-spacing: 0;
 }
@@ -528,7 +528,32 @@ textarea:focus {
 .settings-section {
   display: grid;
   gap: 12px;
-  margin-bottom: 18px;
+  margin: 14px 0 18px;
+}
+
+.settings-room {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed rgba(255, 243, 207, 0.32);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.settings-room label {
+  margin-bottom: 0;
+  color: var(--yellow);
+  font-size: 0.82rem;
+}
+
+.settings-room strong {
+  color: var(--yellow);
+}
+
+.settings-room span {
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 .settings-device {
@@ -585,15 +610,6 @@ textarea:focus {
   font-size: 0.82rem;
 }
 
-.manual-panel {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 16px;
-  padding: 18px;
-  border-top: 2px solid rgba(255, 255, 255, 0.14);
-  background: linear-gradient(180deg, rgba(12, 20, 45, 0.96), rgba(39, 15, 39, 0.96));
-}
-
 .call-status {
   padding: 12px 14px;
   border-radius: var(--radius);
@@ -613,24 +629,6 @@ textarea:focus {
 .call-status.error {
   background: rgba(255, 37, 87, 0.42);
   border: 1px solid rgba(255, 255, 255, 0.22);
-}
-
-.manual-role-panel {
-  display: grid;
-  gap: 14px;
-}
-
-.manual-step {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px dashed rgba(255, 243, 207, 0.3);
-  border-radius: var(--radius);
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.manual-step strong {
-  color: var(--yellow);
 }
 
 @media (max-width: 760px) {
@@ -658,7 +656,12 @@ textarea:focus {
 
   .call-stage {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(34vh, 1fr) minmax(34vh, 1fr) auto;
+    grid-template-rows: 50vh 50vh;
+  }
+
+  .call-tile,
+  .call-tile video {
+    min-height: 50vh;
   }
 
   .remote-tile {

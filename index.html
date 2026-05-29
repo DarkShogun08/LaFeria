@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>La Feria - Llamadas WebRTC</title>
-  <link rel="stylesheet" href="styles.css?v=20260529-2">
+  <title>La Feria - WebRTC Manual</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="screen" id="menuScreen">
@@ -31,15 +31,15 @@
 
         <button class="menu-btn" type="button" onclick="showScreen('profileScreen')">
           <span class="icon" aria-hidden="true">1</span>
-          <span class="label">Anadir/Cambiar nombre</span>
+          <span class="label">Anadir/Cambiar nombre de perfil</span>
         </button>
         <button class="menu-btn" type="button" onclick="showScreen('createScreen')">
           <span class="icon" aria-hidden="true">2</span>
-          <span class="label">Crear sala</span>
+          <span class="label">Crear llamada</span>
         </button>
-        <button class="menu-btn" type="button" onclick="showJoinScreen()">
+        <button class="menu-btn" type="button" onclick="showScreen('joinScreen')">
           <span class="icon" aria-hidden="true">3</span>
-          <span class="label">Unirse a sala</span>
+          <span class="label">Unirse a llamada</span>
         </button>
       </div>
     </section>
@@ -48,7 +48,7 @@
   <section class="screen hidden" id="profileScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">&larr;</button>
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
         EDITAR PERFIL
       </div>
       <div class="form-group">
@@ -66,26 +66,31 @@
   <section class="screen hidden" id="createScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">&larr;</button>
-        CREAR SALA
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
+        CREAR LLAMADA
       </div>
       <p class="join-hint">
-        Esta version funciona en GitHub Pages sin servidor. Creara una invitacion para enviarla a la otra persona y luego tendras que pegar su respuesta de aceptacion.
+        Modo manual compatible con GitHub Pages. No usa servidor ni APIs externas de pago.
+        Para conectar, ambos usuarios deben copiar y pegar los codigos de conexion.
       </p>
 
-      <div class="form-group">
-        <label for="createRoomName">Nombre de llamada</label>
-        <input id="createRoomName" type="text" maxlength="40" placeholder="Carpa principal">
-      </div>
-
       <label class="option-row" for="usePublicStun">
-        <input id="usePublicStun" type="checkbox">
+        <input id="usePublicStun" type="checkbox" checked>
         <span>
-          Usar STUN publico opcional para mejorar conexiones entre redes distintas. No crea salas ni sustituye un servidor.
+          Usar STUN publico para mejorar la conexion entre redes.
+          STUN no crea salas ni sustituye estos codigos.
         </span>
       </label>
 
-      <button class="btn btn-primary btn-full" id="createRoomButton" type="button" onclick="createRoom()">Crear sala</button>
+      <div class="steps-box">
+        <strong>Para quien crea la llamada</strong>
+        <span>Paso 1: pulsa crear llamada.</span>
+        <span>Paso 2: copia el codigo de oferta y mandaselo a la otra persona.</span>
+        <span>Paso 3: pega aqui la respuesta que te devuelvan.</span>
+        <span>Paso 4: pulsa conectar.</span>
+      </div>
+
+      <button class="btn btn-primary btn-full" type="button" onclick="createManualOffer()">Crear llamada</button>
       <div class="msg" id="createMsg"></div>
     </div>
   </section>
@@ -93,31 +98,35 @@
   <section class="screen hidden" id="joinScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">&larr;</button>
-        UNIRSE A SALA
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
+        UNIRSE A LLAMADA
       </div>
       <p class="join-hint">
-        Pega aqui el enlace o codigo que te ha mandado la otra persona. Al aceptar se generara una respuesta para devolversela.
+        Pega el codigo de oferta que te envio la otra persona. La app generara una respuesta para devolversela.
       </p>
 
-      <div class="form-group">
-        <label for="inviteInput">Invitacion recibida</label>
-        <textarea id="inviteInput" class="signal-code" placeholder="Pega aqui el enlace o codigo de invitacion"></textarea>
+      <div class="steps-box">
+        <strong>Para quien se une</strong>
+        <span>Paso 1: pega el codigo que te mandaron.</span>
+        <span>Paso 2: genera la respuesta.</span>
+        <span>Paso 3: copia la respuesta y devuelvesela al creador.</span>
       </div>
 
-      <label class="option-row" for="joinUsePublicStun">
-        <input id="joinUsePublicStun" type="checkbox">
-        <span>Usar STUN publico opcional para mejorar la conexion WebRTC.</span>
-      </label>
-
-      <button class="btn btn-primary btn-full" id="acceptCallButton" type="button" onclick="acceptCall()">Aceptar sala</button>
+      <div class="form-group">
+        <label for="manualReceivedCode">Codigo de oferta recibido</label>
+        <textarea id="manualReceivedCode" class="signal-code" placeholder="Pega aqui el codigo de oferta"></textarea>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" type="button" onclick="pasteCode('manualReceivedCode')">Pegar</button>
+        <button class="btn btn-primary" type="button" onclick="generateManualAnswer()">Generar respuesta</button>
+      </div>
       <div class="msg" id="joinMsg"></div>
     </div>
   </section>
 
   <section class="screen hidden" id="roomScreen">
     <div class="call-stage">
-      <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">SET</button>
+      <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">⚙</button>
 
       <aside class="settings-panel hidden" id="settingsPanel" aria-label="Configuracion de llamada">
         <div class="settings-header">
@@ -125,7 +134,7 @@
             <span class="settings-kicker">Cabina de control</span>
             <h2>Ajustes</h2>
           </div>
-          <button class="settings-close" type="button" aria-label="Cerrar configuracion" onclick="closeSettingsPanel()">X</button>
+          <button class="settings-close" type="button" aria-label="Cerrar configuracion" onclick="closeSettingsPanel()">×</button>
         </div>
 
         <div class="settings-section">
@@ -146,82 +155,57 @@
           </button>
         </div>
 
-        <div class="settings-section">
-          <div class="form-group">
-            <label for="cameraSelect">Camara</label>
-            <select id="cameraSelect" onchange="changeCamera(this.value)"></select>
-            <button class="btn btn-ghost btn-full btn-sm" type="button" onclick="activateCamera()">Activar camara</button>
-          </div>
-
-          <div class="form-group">
-            <label for="microphoneSelect">Microfono</label>
-            <select id="microphoneSelect" onchange="changeMicrophone(this.value)"></select>
-            <button class="btn btn-ghost btn-full btn-sm" type="button" onclick="activateMicrophone()">Activar microfono</button>
-          </div>
-
-          <div class="form-group hidden" id="speakerGroup">
-            <label for="speakerSelect">Salida de audio</label>
-            <select id="speakerSelect" onchange="changeSpeaker(this.value)"></select>
-          </div>
-        </div>
-
         <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir</button>
       </aside>
 
       <section class="call-tile local-tile">
         <video id="localVideo" autoplay muted playsinline></video>
-        <div class="video-off-overlay hidden" id="camOffMsg">Camara no disponible o apagada.</div>
+        <div class="video-off-overlay hidden" id="camOffMsg">Camara apagada</div>
         <div class="person-label" id="localNameLabel">Tu</div>
       </section>
 
       <section class="call-tile remote-tile">
         <video id="remoteVideo" autoplay playsinline></video>
         <div class="waiting-panel" id="waitingPanel">
-          <span>Esperando conexion...</span>
+          <span>Esperando a la otra persona...</span>
         </div>
-        <button class="remote-audio-btn hidden" id="enableRemoteAudioButton" type="button" onclick="enableRemoteAudio()">
-          Activar audio remoto
-        </button>
-        <div class="person-label" id="remoteNameLabel">Otra persona</div>
+        <div class="person-label">Otra persona</div>
       </section>
 
-      <section class="room-panel" id="roomPanel">
-        <div>
-          <span class="room-code-kicker">Llamada</span>
-          <strong class="room-name-title" id="roomNameTitle">Sin llamada</strong>
-        </div>
+      <section class="manual-panel" id="manualPanel">
         <div class="call-status info" id="callStatus">
-          Preparando llamada...
+          Modo manual compatible con GitHub Pages.
         </div>
 
-        <div class="room-panel-grid">
-          <article class="signal-panel hidden" id="invitePanel">
-            <strong>Paso 1: envia esta invitacion</strong>
-            <p>Copia este enlace y mandaselo a la otra persona. Cuando te devuelva su respuesta, pegala en el paso 2.</p>
-            <textarea id="inviteLink" class="signal-code" readonly></textarea>
-            <button class="btn btn-primary btn-full" type="button" onclick="copyInvite()">Copiar invitacion</button>
-          </article>
-
-          <article class="signal-panel hidden" id="creatorAnswerPanel">
-            <strong>Paso 2: pega la respuesta</strong>
-            <p>Pega aqui la respuesta de aceptacion que te mande la otra persona y pulsa conectar.</p>
-            <textarea id="creatorAnswerCode" class="signal-code" placeholder="Pega aqui la respuesta de aceptacion"></textarea>
-            <button class="btn btn-primary btn-full" type="button" onclick="completeConnection()">Conectar</button>
-          </article>
-
-          <article class="signal-panel hidden" id="answerPanel">
-            <strong>Respuesta de aceptacion</strong>
-            <p>Copia esta respuesta y devuelvesela a quien creo la llamada.</p>
-            <textarea id="answerCode" class="signal-code" readonly></textarea>
-            <button class="btn btn-primary btn-full" type="button" onclick="copyAnswer()">Copiar respuesta</button>
-          </article>
+        <div class="manual-role-panel" id="creatorPanel">
+          <h2>Creador de la llamada</h2>
+          <div class="manual-step">
+            <strong>Paso 1: copia este codigo y mandaselo a la otra persona</strong>
+            <textarea id="manualOfferCode" class="signal-code" readonly></textarea>
+            <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualOfferCode')">Copiar codigo de oferta</button>
+          </div>
+          <div class="manual-step">
+            <strong>Paso 2: pega aqui la respuesta que te devuelvan</strong>
+            <textarea id="manualFinalAnswerCode" class="signal-code" placeholder="Pega aqui el codigo de respuesta"></textarea>
+            <div class="btn-row">
+              <button class="btn btn-ghost" type="button" onclick="pasteCode('manualFinalAnswerCode')">Pegar</button>
+              <button class="btn btn-primary" type="button" onclick="applyManualAnswer()">Conectar</button>
+            </div>
+          </div>
         </div>
 
-        <div class="msg" id="roomMsg"></div>
+        <div class="manual-role-panel hidden" id="guestPanel">
+          <h2>Persona que se une</h2>
+          <div class="manual-step">
+            <strong>Respuesta generada: copia este codigo y devuelveselo al creador</strong>
+            <textarea id="manualAnswerCode" class="signal-code" readonly></textarea>
+            <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualAnswerCode')">Copiar codigo de respuesta</button>
+          </div>
+        </div>
       </section>
     </div>
   </section>
 
-  <script src="app.js?v=20260529-2"></script>
+  <script src="app.js"></script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>La Feria - WebRTC Manual</title>
+  <title>La Feria - Llamadas</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -70,24 +70,21 @@
         CREAR LLAMADA
       </div>
       <p class="join-hint">
-        Modo manual compatible con GitHub Pages. No usa servidor ni APIs externas de pago.
-        Para conectar, ambos usuarios deben copiar y pegar los codigos de conexion.
+        Crea una llamada con un codigo corto de 12 digitos para compartirlo facilmente.
       </p>
 
       <label class="option-row" for="usePublicStun">
         <input id="usePublicStun" type="checkbox" checked>
         <span>
           Usar STUN publico para mejorar la conexion entre redes.
-          STUN no crea salas ni sustituye estos codigos.
         </span>
       </label>
 
       <div class="steps-box">
         <strong>Para quien crea la llamada</strong>
         <span>Paso 1: pulsa crear llamada.</span>
-        <span>Paso 2: copia el codigo de oferta y mandaselo a la otra persona.</span>
-        <span>Paso 3: pega aqui la respuesta que te devuelvan.</span>
-        <span>Paso 4: pulsa conectar.</span>
+        <span>Paso 2: copia el codigo corto y mandaselo a la otra persona.</span>
+        <span>Paso 3: espera a que se una.</span>
       </div>
 
       <button class="btn btn-primary btn-full" type="button" onclick="createManualOffer()">Crear llamada</button>
@@ -102,23 +99,22 @@
         UNIRSE A LLAMADA
       </div>
       <p class="join-hint">
-        Pega el codigo de oferta que te envio la otra persona. La app generara una respuesta para devolversela.
+        Pega el codigo corto que te envio la otra persona para entrar en la llamada.
       </p>
 
       <div class="steps-box">
         <strong>Para quien se une</strong>
         <span>Paso 1: pega el codigo que te mandaron.</span>
-        <span>Paso 2: genera la respuesta.</span>
-        <span>Paso 3: copia la respuesta y devuelvesela al creador.</span>
+        <span>Paso 2: pulsa unirse.</span>
       </div>
 
       <div class="form-group">
-        <label for="manualReceivedCode">Codigo de oferta recibido</label>
-        <textarea id="manualReceivedCode" class="signal-code" placeholder="Pega aqui el codigo de oferta"></textarea>
+        <label for="manualReceivedCode">Codigo corto recibido</label>
+        <input id="manualReceivedCode" class="signal-code room-code-field" placeholder="Ej: 123456789012" inputmode="numeric" maxlength="20">
       </div>
       <div class="btn-row">
         <button class="btn btn-ghost" type="button" onclick="pasteCode('manualReceivedCode')">Pegar</button>
-        <button class="btn btn-primary" type="button" onclick="generateManualAnswer()">Generar respuesta</button>
+        <button class="btn btn-primary" type="button" onclick="generateManualAnswer()">Unirse</button>
       </div>
       <div class="msg" id="joinMsg"></div>
     </div>
@@ -174,38 +170,30 @@
 
       <section class="manual-panel" id="manualPanel">
         <div class="call-status info" id="callStatus">
-          Modo manual compatible con GitHub Pages.
+          Comparte el codigo corto para empezar.
         </div>
 
         <div class="manual-role-panel" id="creatorPanel">
           <h2>Creador de la llamada</h2>
           <div class="manual-step">
-            <strong>Paso 1: copia este codigo y mandaselo a la otra persona</strong>
-            <textarea id="manualOfferCode" class="signal-code" readonly></textarea>
-            <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualOfferCode')">Copiar codigo de oferta</button>
-          </div>
-          <div class="manual-step">
-            <strong>Paso 2: pega aqui la respuesta que te devuelvan</strong>
-            <textarea id="manualFinalAnswerCode" class="signal-code" placeholder="Pega aqui el codigo de respuesta"></textarea>
-            <div class="btn-row">
-              <button class="btn btn-ghost" type="button" onclick="pasteCode('manualFinalAnswerCode')">Pegar</button>
-              <button class="btn btn-primary" type="button" onclick="applyManualAnswer()">Conectar</button>
-            </div>
+            <strong>Codigo corto de llamada</strong>
+            <input id="manualOfferCode" class="signal-code room-code-field" readonly>
+            <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualOfferCode')">Copiar codigo</button>
           </div>
         </div>
 
         <div class="manual-role-panel hidden" id="guestPanel">
           <h2>Persona que se une</h2>
           <div class="manual-step">
-            <strong>Respuesta generada: copia este codigo y devuelveselo al creador</strong>
-            <textarea id="manualAnswerCode" class="signal-code" readonly></textarea>
-            <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualAnswerCode')">Copiar codigo de respuesta</button>
+            <strong>Conectando con el creador de la llamada...</strong>
+            <p class="join-hint">Mantente en esta pantalla mientras se establece la conexion.</p>
           </div>
         </div>
       </section>
     </div>
   </section>
 
+  <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

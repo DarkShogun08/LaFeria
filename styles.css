@@ -628,6 +628,36 @@ textarea:focus {
   background: linear-gradient(180deg, rgba(12, 20, 45, 0.96), rgba(39, 15, 39, 0.96));
 }
 
+.room-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.signal-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255, 243, 207, 0.26);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.signal-panel strong {
+  color: var(--yellow);
+  font-size: 1.02rem;
+  text-transform: uppercase;
+}
+
+.signal-panel p {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.signal-panel textarea {
+  min-height: 104px;
+}
+
 .call-status {
   padding: 12px 14px;
   border-radius: var(--radius);

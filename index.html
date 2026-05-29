@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>La Feria - Salas WebRTC</title>
+  <title>La Feria - Llamadas WebRTC</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -37,9 +37,9 @@
           <span class="icon" aria-hidden="true">2</span>
           <span class="label">Crear sala</span>
         </button>
-        <button class="menu-btn" type="button" onclick="showSearchScreen()">
+        <button class="menu-btn" type="button" onclick="showJoinScreen()">
           <span class="icon" aria-hidden="true">3</span>
-          <span class="label">Buscar salas</span>
+          <span class="label">Unirse a sala</span>
         </button>
       </div>
     </section>
@@ -70,54 +70,48 @@
         CREAR SALA
       </div>
       <p class="join-hint">
-        Crea una sala temporal en tu servidor WebSocket. El servidor solo gestiona salas y senalizacion;
-        el video y el audio van por WebRTC P2P.
+        Esta version funciona en GitHub Pages sin servidor. Creara una invitacion para enviarla a la otra persona y luego tendras que pegar su respuesta de aceptacion.
       </p>
 
       <div class="form-group">
-        <label for="createRoomName">Nombre de sala</label>
+        <label for="createRoomName">Nombre de llamada</label>
         <input id="createRoomName" type="text" maxlength="40" placeholder="Carpa principal">
-      </div>
-      <div class="form-group">
-        <label for="createRoomPassword">Contrasena</label>
-        <input id="createRoomPassword" type="password" maxlength="80" placeholder="Minimo 4 caracteres">
-      </div>
-      <div class="form-group">
-        <label for="createRoomPasswordRepeat">Repetir contrasena</label>
-        <input id="createRoomPasswordRepeat" type="password" maxlength="80" placeholder="Opcional, para confirmar">
       </div>
 
       <label class="option-row" for="usePublicStun">
-        <input id="usePublicStun" type="checkbox" checked>
+        <input id="usePublicStun" type="checkbox">
         <span>
-          Usar STUN publico gratuito para mejorar conexiones entre redes distintas.
-          Sin TURN algunas redes restrictivas pueden fallar.
+          Usar STUN publico opcional para mejorar conexiones entre redes distintas. No crea salas ni sustituye un servidor.
         </span>
       </label>
 
-      <button class="btn btn-primary btn-full" id="createRoomButton" type="button" onclick="createRoom()">Crear</button>
+      <button class="btn btn-primary btn-full" id="createRoomButton" type="button" onclick="createRoom()">Crear sala</button>
       <div class="msg" id="createMsg"></div>
     </div>
   </section>
 
-  <section class="screen hidden" id="searchScreen">
+  <section class="screen hidden" id="joinScreen">
     <div class="card form-card">
       <div class="screen-title">
         <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">&larr;</button>
-        BUSCAR SALAS
+        UNIRSE A SALA
       </div>
       <p class="join-hint">
-        Actualiza la lista, elige una sala disponible e introduce su contrasena.
+        Pega aqui el enlace o codigo que te ha mandado la otra persona. Al aceptar se generara una respuesta para devolversela.
       </p>
 
+      <div class="form-group">
+        <label for="inviteInput">Invitacion recibida</label>
+        <textarea id="inviteInput" class="signal-code" placeholder="Pega aqui el enlace o codigo de invitacion"></textarea>
+      </div>
+
       <label class="option-row" for="joinUsePublicStun">
-        <input id="joinUsePublicStun" type="checkbox" checked>
-        <span>Usar STUN publico gratuito para mejorar la conexion WebRTC.</span>
+        <input id="joinUsePublicStun" type="checkbox">
+        <span>Usar STUN publico opcional para mejorar la conexion WebRTC.</span>
       </label>
 
-      <button class="btn btn-primary btn-full" type="button" onclick="listRooms()">Actualizar salas</button>
-      <div class="rooms-list" id="roomsList"></div>
-      <div class="msg" id="searchMsg"></div>
+      <button class="btn btn-primary btn-full" id="acceptCallButton" type="button" onclick="acceptCall()">Aceptar sala</button>
+      <div class="msg" id="joinMsg"></div>
     </div>
   </section>
 
@@ -183,7 +177,7 @@
       <section class="call-tile remote-tile">
         <video id="remoteVideo" autoplay playsinline></video>
         <div class="waiting-panel" id="waitingPanel">
-          <span>Esperando a otra persona...</span>
+          <span>Esperando conexion...</span>
         </div>
         <button class="remote-audio-btn hidden" id="enableRemoteAudioButton" type="button" onclick="enableRemoteAudio()">
           Activar audio remoto
@@ -193,12 +187,36 @@
 
       <section class="room-panel" id="roomPanel">
         <div>
-          <span class="room-code-kicker">Sala</span>
-          <strong class="room-name-title" id="roomNameTitle">Sin sala</strong>
+          <span class="room-code-kicker">Llamada</span>
+          <strong class="room-name-title" id="roomNameTitle">Sin llamada</strong>
         </div>
         <div class="call-status info" id="callStatus">
           Preparando llamada...
         </div>
+
+        <div class="room-panel-grid">
+          <article class="signal-panel hidden" id="invitePanel">
+            <strong>Paso 1: envia esta invitacion</strong>
+            <p>Copia este enlace y mandaselo a la otra persona. Cuando te devuelva su respuesta, pegala en el paso 2.</p>
+            <textarea id="inviteLink" class="signal-code" readonly></textarea>
+            <button class="btn btn-primary btn-full" type="button" onclick="copyInvite()">Copiar invitacion</button>
+          </article>
+
+          <article class="signal-panel hidden" id="creatorAnswerPanel">
+            <strong>Paso 2: pega la respuesta</strong>
+            <p>Pega aqui la respuesta de aceptacion que te mande la otra persona y pulsa conectar.</p>
+            <textarea id="creatorAnswerCode" class="signal-code" placeholder="Pega aqui la respuesta de aceptacion"></textarea>
+            <button class="btn btn-primary btn-full" type="button" onclick="completeConnection()">Conectar</button>
+          </article>
+
+          <article class="signal-panel hidden" id="answerPanel">
+            <strong>Respuesta de aceptacion</strong>
+            <p>Copia esta respuesta y devuelvesela a quien creo la llamada.</p>
+            <textarea id="answerCode" class="signal-code" readonly></textarea>
+            <button class="btn btn-primary btn-full" type="button" onclick="copyAnswer()">Copiar respuesta</button>
+          </article>
+        </div>
+
         <div class="msg" id="roomMsg"></div>
       </section>
     </div>

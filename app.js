@@ -1,26 +1,30 @@
-// La Feria - version estatica para GitHub Pages.
-// No usa backend, WebSocket, Firebase, Supabase, claves API ni servicios de pago.
-// La senalizacion WebRTC se hace con enlace de invitacion + respuesta de aceptacion.
+// La Feria - frontend GitHub Pages + backend WebSocket propio.
+// En local usa ws://localhost:3000/ws.
+// En produccion con GitHub Pages HTTPS debes usar wss://TU-SERVIDOR-PUBLICO/ws.
+const SIGNALING_SERVER_URL = "ws://localhost:3000/ws";
 
-const SIGNAL_PREFIX = "LF1";
-const SIGNAL_COMPRESSED_PREFIX = "LF1C";
 const PUBLIC_STUN_SERVER = "stun:stun.l.google.com:19302";
 
 const state = {
   profile: localStorage.getItem("la_feria_profile") || "",
   role: "",
+  clientId: "",
+  roomId: "",
+  roomName: "",
+  ws: null,
   peer: null,
   localStream: null,
   remoteStream: null,
   micEnabled: true,
   camEnabled: true,
-  pendingInviteCode: "",
   cameraId: "",
   microphoneId: "",
   speakerId: "",
   videoDevices: [],
   audioDevices: [],
   speakerDevices: [],
+  mediaReady: Promise.resolve(),
+  pendingIceCandidates: [],
 };
 
 function $(id) {
@@ -31,9 +35,7 @@ function showScreen(id) {
   document.querySelectorAll(".screen").forEach(screen => screen.classList.add("hidden"));
   $(id)?.classList.remove("hidden");
 
-  if (id === "profileScreen") {
-    $("profileInput").value = state.profile;
-  }
+  if (id === "profileScreen") $("profileInput").value = state.profile;
 }
 
 function showMsg(id, type, text) {
@@ -65,10 +67,7 @@ function updateProfileBadge() {
 
 function saveProfile() {
   const value = $("profileInput").value.trim();
-  if (!value) {
-    showMsg("profileMsg", "error", "El nombre no puede estar vacio.");
-    return;
-  }
+  if (!value) return showMsg("profileMsg", "error", "El nombre no puede estar vacio.");
 
   state.profile = value;
   localStorage.setItem("la_feria_profile", value);
@@ -87,43 +86,239 @@ function usePublicStun() {
 }
 
 function getRtcConfig() {
-  // STUN ayuda a descubrir rutas entre redes distintas.
-  // STUN no crea salas, no sustituye la senalizacion y no retransmite audio/video.
-  // Sin TURN, WebRTC puede fallar en redes restrictivas. Esta app no usa TURN de pago.
+  // STUN ayuda a conectar usuarios en redes distintas.
+  // STUN no crea salas, no sustituye WebSocket y no retransmite video/audio.
+  // Sin TURN algunas redes restrictivas pueden fallar. Esta app no usa TURN de pago.
   return usePublicStun()
     ? { iceServers: [{ urls: PUBLIC_STUN_SERVER }] }
     : { iceServers: [] };
 }
 
+function connectSignaling() {
+  if (state.ws?.readyState === WebSocket.OPEN) return Promise.resolve(state.ws);
+  if (state.ws?.readyState === WebSocket.CONNECTING) {
+    return new Promise((resolve, reject) => {
+      state.ws.addEventListener("open", () => resolve(state.ws), { once: true });
+      state.ws.addEventListener("error", reject, { once: true });
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(SIGNALING_SERVER_URL);
+    state.ws = ws;
+
+    const fail = () => {
+      reject(new Error("No se pudo conectar con el servidor de salas. Revisa que el servidor WebSocket este encendido y que SIGNALING_SERVER_URL sea correcto."));
+    };
+
+    ws.addEventListener("open", () => {
+      showMsg(currentMessageBox(), "success", "Servidor conectado.");
+      resolve(ws);
+    }, { once: true });
+
+    ws.addEventListener("message", event => {
+      try {
+        handleServerMessage(JSON.parse(event.data));
+      } catch (err) {
+        console.warn("Mensaje invalido del servidor.");
+      }
+    });
+
+    ws.addEventListener("close", () => {
+      if (state.roomId) setStatus("Servidor de salas desconectado.", "error");
+    });
+
+    ws.addEventListener("error", fail, { once: true });
+  });
+}
+
+function currentMessageBox() {
+  if (!$("createScreen").classList.contains("hidden")) return "createMsg";
+  if (!$("searchScreen").classList.contains("hidden")) return "searchMsg";
+  if (!$("roomScreen").classList.contains("hidden")) return "roomMsg";
+  return "createMsg";
+}
+
+function send(type, data = {}) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    showMsg(currentMessageBox(), "error", "No se pudo conectar con el servidor de salas.");
+    return false;
+  }
+
+  state.ws.send(JSON.stringify({ type, ...data }));
+  return true;
+}
+
+function handleServerMessage(message) {
+  switch (message.type) {
+    case "connected":
+      state.clientId = message.clientId;
+      break;
+
+    case "rooms-list":
+      renderRooms(message.rooms || []);
+      break;
+
+    case "room-created":
+      state.roomId = message.room.id;
+      state.roomName = message.room.name;
+      enterCallScreen("creator", "Sala creada. Esperando a otra persona.");
+      break;
+
+    case "room-joined":
+      state.roomId = message.room.id;
+      state.roomName = message.room.name;
+      enterCallScreen("guest", "Conectando con la sala.");
+      break;
+
+    case "room-ready":
+      setStatus("Conectando WebRTC...", "info");
+      if (message.creatorId === state.clientId) startOffer();
+      break;
+
+    case "offer":
+      handleOffer(message.description);
+      break;
+
+    case "answer":
+      handleAnswer(message.description);
+      break;
+
+    case "ice-candidate":
+      handleIceCandidate(message.candidate);
+      break;
+
+    case "peer-left":
+      resetRemoteMedia();
+      setStatus("La otra persona salio. Esperando a otra persona.", "info");
+      break;
+
+    case "room-closed":
+      resetRemoteMedia();
+      setStatus("La sala no existe o ha caducado.", "error");
+      break;
+
+    case "room-list-updated":
+      if (!$("searchScreen").classList.contains("hidden")) listRooms();
+      break;
+
+    case "error":
+      showMsg(currentMessageBox(), "error", message.message || "Ha ocurrido un error.");
+      setStatus(message.message || "Ha ocurrido un error.", "error");
+      break;
+  }
+}
+
+async function createRoom() {
+  clearMsg("createMsg");
+  const name = $("createRoomName").value.trim();
+  const password = $("createRoomPassword").value;
+  const repeat = $("createRoomPasswordRepeat").value;
+  const button = $("createRoomButton");
+
+  if (!name) return showMsg("createMsg", "error", "Escribe un nombre de sala.");
+  if (password.length < 4) return showMsg("createMsg", "error", "La contrasena debe tener al menos 4 caracteres.");
+  if (repeat && repeat !== password) return showMsg("createMsg", "error", "Las contrasenas no coinciden.");
+
+  try {
+    button.disabled = true;
+    button.textContent = "Creando...";
+    showMsg("createMsg", "success", "Conectando con servidor de salas...");
+    await connectSignaling();
+    state.role = "creator";
+    send("create-room", { name, password, displayName: getDisplayName() });
+  } catch (err) {
+    showMsg("createMsg", "error", err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Crear";
+  }
+}
+
+async function showSearchScreen() {
+  showScreen("searchScreen");
+  await listRooms();
+}
+
+async function listRooms() {
+  clearMsg("searchMsg");
+  $("roomsList").innerHTML = "";
+
+  try {
+    showMsg("searchMsg", "success", "Buscando salas...");
+    await connectSignaling();
+    send("list-rooms");
+  } catch (err) {
+    showMsg("searchMsg", "error", err.message);
+  }
+}
+
+function renderRooms(rooms) {
+  const list = $("roomsList");
+  list.innerHTML = "";
+
+  if (!rooms.length) {
+    showMsg("searchMsg", "success", "No hay salas activas.");
+    return;
+  }
+
+  clearMsg("searchMsg");
+  rooms.forEach(room => {
+    const item = document.createElement("article");
+    item.className = "room-card";
+    item.innerHTML = `
+      <div>
+        <strong>${escapeHtml(room.name)}</strong>
+        <span>${room.users}/2 usuarios - ${room.available ? "Disponible" : "Llena"}</span>
+      </div>
+      <div class="room-card-actions">
+        <input type="password" id="roomPass_${room.id}" placeholder="Contrasena" ${room.available ? "" : "disabled"}>
+        <button class="btn btn-primary" type="button" ${room.available ? "" : "disabled"} onclick="joinRoom('${room.id}')">Entrar</button>
+      </div>`;
+    list.appendChild(item);
+  });
+}
+
+async function joinRoom(roomId) {
+  clearMsg("searchMsg");
+  const password = $(`roomPass_${roomId}`)?.value || "";
+  if (!password) return showMsg("searchMsg", "error", "Introduce la contrasena.");
+
+  try {
+    await connectSignaling();
+    state.role = "guest";
+    send("join-room", { roomId, password, displayName: getDisplayName() });
+  } catch (err) {
+    showMsg("searchMsg", "error", err.message);
+  }
+}
+
+async function enterCallScreen(role, statusText) {
+  state.role = role;
+  state.pendingIceCandidates = [];
+  $("localNameLabel").textContent = getDisplayName();
+  $("roomNameTitle").textContent = state.roomName || "Sala";
+  $("remoteNameLabel").textContent = "Otra persona";
+  $("remoteVideo").srcObject = null;
+  $("enableRemoteAudioButton")?.classList.add("hidden");
+  $("waitingPanel").classList.remove("hidden");
+  showScreen("roomScreen");
+  setStatus(statusText, "info");
+  state.mediaReady = (async () => {
+    await tryStartLocalMedia();
+    await loadDeviceList();
+  })();
+  await state.mediaReady;
+}
+
 function mediaErrorMessage(err) {
   const name = err?.name || "";
 
-  if (!window.isSecureContext) {
-    return "Camara y microfono requieren HTTPS. GitHub Pages usa HTTPS; en local usa localhost.";
-  }
-
-  if (name === "NotAllowedError" || name === "SecurityError") {
-    return "Has denegado permisos de camara o microfono. Activalos desde el navegador.";
-  }
-
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "No se encontro camara o microfono disponible.";
-  }
-
-  if (name === "NotReadableError" || name === "TrackStartError") {
-    return "La camara o el microfono parecen estar siendo usados por otra aplicacion.";
-  }
-
-  return "No se pudo acceder a camara/microfono. Revisa permisos y vuelve a intentarlo.";
-}
-
-function friendlyErrorMessage(err) {
-  if (err?.name) return mediaErrorMessage(err);
-  return err?.message || "Ha ocurrido un error inesperado.";
-}
-
-async function ensureLocalMedia() {
-  return tryStartLocalMedia();
+  if (!window.isSecureContext) return "Camara y microfono requieren HTTPS. GitHub Pages usa HTTPS; en local usa localhost.";
+  if (name === "NotAllowedError" || name === "SecurityError") return "Has entrado sin camara/microfono. Puedes activarlos desde ajustes.";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") return "Camara o microfono no disponibles. Puedes continuar sin dispositivos.";
+  if (name === "NotReadableError" || name === "TrackStartError") return "Camara o microfono usados por otra aplicacion. Puedes continuar sin dispositivos.";
+  return "No se pudo acceder a camara/microfono. Puedes continuar sin dispositivos.";
 }
 
 async function tryStartLocalMedia() {
@@ -131,53 +326,30 @@ async function tryStartLocalMedia() {
 
   if (!navigator.mediaDevices?.getUserMedia) {
     setLocalStream(null);
-    showSoftDeviceWarning("Este navegador no permite usar camara/microfono, pero puedes continuar sin dispositivos.");
+    setStatus("Este navegador no permite usar camara/microfono, pero puedes continuar sin dispositivos.", "info");
     return null;
   }
 
   const attempts = [
-    {
-      constraints: {
-        video: state.cameraId ? { deviceId: { exact: state.cameraId } } : true,
-        audio: state.microphoneId ? { deviceId: { exact: state.microphoneId } } : true,
-      },
-      message: "",
-    },
-    {
-      constraints: { video: state.cameraId ? { deviceId: { exact: state.cameraId } } : true, audio: false },
-      message: "Microfono no disponible. Puedes continuar sin microfono.",
-    },
-    {
-      constraints: { video: false, audio: state.microphoneId ? { deviceId: { exact: state.microphoneId } } : true },
-      message: "Camara no disponible. Puedes continuar sin camara.",
-    },
+    { constraints: { video: true, audio: true }, message: "" },
+    { constraints: { video: true, audio: false }, message: "Microfono no disponible o silenciado." },
+    { constraints: { video: false, audio: true }, message: "Camara no disponible o apagada." },
   ];
 
   for (const attempt of attempts) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia(attempt.constraints);
       setLocalStream(stream);
-      await loadDeviceList();
-      if (attempt.message) showSoftDeviceWarning(attempt.message);
+      if (attempt.message) setStatus(attempt.message, "info");
       return stream;
     } catch (err) {
-      // Seguimos probando combinaciones mas pequenas. La sala no depende de esto.
+      // Seguimos probando opciones parciales. Entrar a sala no depende de dispositivos.
     }
   }
 
   setLocalStream(null);
-  await loadDeviceList();
-  showSoftDeviceWarning("No se pudo acceder a camara ni microfono. La sala se creara igualmente; podras escuchar/ver si la otra persona comparte.");
+  setStatus("Has entrado sin camara/microfono. Puedes activarlos desde ajustes.", "info");
   return null;
-}
-
-function showSoftDeviceWarning(text) {
-  if (state.role === "creator") {
-    showMsg("createMsg", "success", text);
-  } else if (state.role === "guest") {
-    showMsg("joinMsg", "success", text);
-  }
-  setStatus(text, "info");
 }
 
 function setLocalStream(stream) {
@@ -193,6 +365,191 @@ function setLocalStream(stream) {
   $("localVideo").srcObject = stream;
   $("camOffMsg").classList.toggle("hidden", state.camEnabled);
   updateControls();
+}
+
+function createPeerConnection() {
+  closePeer();
+
+  const pc = new RTCPeerConnection(getRtcConfig());
+  state.peer = pc;
+  state.remoteStream = new MediaStream();
+  const remoteVideo = $("remoteVideo");
+  remoteVideo.srcObject = state.remoteStream;
+  remoteVideo.muted = false;
+  remoteVideo.volume = 1;
+
+  debugRtc("peer-created", {
+    role: state.role,
+    localAudioTracks: state.localStream?.getAudioTracks().length || 0,
+    localVideoTracks: state.localStream?.getVideoTracks().length || 0,
+  });
+
+  pc.onicecandidate = event => {
+    if (event.candidate) {
+      debugRtc("ice-candidate-sent", {
+        type: event.candidate.type,
+        protocol: event.candidate.protocol,
+        candidateType: event.candidate.candidate?.split(" typ ")[1]?.split(" ")[0] || "unknown",
+      });
+      send("ice-candidate", { candidate: event.candidate.toJSON() });
+    }
+  };
+
+  pc.ontrack = event => {
+    const tracks = event.streams[0]?.getTracks().length ? event.streams[0].getTracks() : [event.track];
+    tracks.filter(Boolean).forEach(track => {
+      if (!state.remoteStream.getTracks().some(existing => existing.id === track.id)) {
+        state.remoteStream.addTrack(track);
+        debugRtc("remote-track-received", {
+          kind: track.kind,
+          id: track.id,
+          remoteTracks: state.remoteStream.getTracks().map(item => item.kind),
+        });
+      }
+    });
+    remoteVideo.srcObject = state.remoteStream;
+    applySpeakerOutput(false);
+    $("waitingPanel").classList.add("hidden");
+    playRemoteMedia();
+  };
+
+  pc.onconnectionstatechange = () => {
+    debugRtc("connection-state", { connectionState: pc.connectionState, signalingState: pc.signalingState });
+    if (pc.connectionState === "connecting") setStatus("Conectando WebRTC...", "info");
+    if (pc.connectionState === "connected") {
+      $("waitingPanel").classList.add("hidden");
+      setStatus("Llamada conectada.", "success");
+      playRemoteMedia();
+    }
+    if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      setStatus("No se pudo establecer WebRTC. Prueba activar STUN, usar otra red o revisar permisos.", "error");
+    }
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    debugRtc("ice-connection-state", { iceConnectionState: pc.iceConnectionState, signalingState: pc.signalingState });
+    if (pc.iceConnectionState === "failed") {
+      setStatus("No se pudo establecer WebRTC. Prueba activar STUN, usar otra red o revisar permisos.", "error");
+    }
+  };
+
+  pc.onsignalingstatechange = () => {
+    debugRtc("signaling-state", { signalingState: pc.signalingState });
+  };
+
+  const audioTrack = state.localStream?.getAudioTracks()[0];
+  const videoTrack = state.localStream?.getVideoTracks()[0];
+
+  if (audioTrack) pc.addTrack(audioTrack, state.localStream);
+  else pc.addTransceiver("audio", { direction: "sendrecv" });
+
+  if (videoTrack) pc.addTrack(videoTrack, state.localStream);
+  else pc.addTransceiver("video", { direction: "sendrecv" });
+
+  debugRtc("local-media-attached", {
+    audio: audioTrack ? "track" : "sendrecv-transceiver",
+    video: videoTrack ? "track" : "sendrecv-transceiver",
+  });
+
+  return pc;
+}
+
+function closePeer() {
+  if (state.peer) {
+    debugRtc("peer-closing", {
+      connectionState: state.peer.connectionState,
+      iceConnectionState: state.peer.iceConnectionState,
+      signalingState: state.peer.signalingState,
+    });
+    state.peer.onicecandidate = null;
+    state.peer.ontrack = null;
+    state.peer.onconnectionstatechange = null;
+    state.peer.oniceconnectionstatechange = null;
+    state.peer.close();
+  }
+  state.peer = null;
+  state.remoteStream = null;
+}
+
+async function startOffer() {
+  try {
+    await state.mediaReady;
+    const pc = createPeerConnection();
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    debugRtc("offer-sent", {
+      audioSenders: pc.getSenders().filter(sender => sender.track?.kind === "audio").length,
+      videoSenders: pc.getSenders().filter(sender => sender.track?.kind === "video").length,
+      transceivers: pc.getTransceivers().map(item => `${item.receiver.track.kind}:${item.direction}`),
+    });
+    send("offer", { description: pc.localDescription });
+  } catch (err) {
+    setStatus("No se pudo crear la oferta WebRTC.", "error");
+    debugRtc("offer-error", { message: err.message });
+  }
+}
+
+async function handleOffer(description) {
+  try {
+    await state.mediaReady;
+    const pc = createPeerConnection();
+    await pc.setRemoteDescription(new RTCSessionDescription(description));
+    await applyPendingIceCandidates();
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    debugRtc("answer-sent", {
+      audioSenders: pc.getSenders().filter(sender => sender.track?.kind === "audio").length,
+      videoSenders: pc.getSenders().filter(sender => sender.track?.kind === "video").length,
+      transceivers: pc.getTransceivers().map(item => `${item.receiver.track.kind}:${item.direction}`),
+    });
+    send("answer", { description: pc.localDescription });
+  } catch (err) {
+    setStatus("No se pudo responder la llamada WebRTC.", "error");
+    debugRtc("answer-error", { message: err.message });
+  }
+}
+
+async function handleAnswer(description) {
+  try {
+    if (!state.peer) return;
+    await state.peer.setRemoteDescription(new RTCSessionDescription(description));
+    await applyPendingIceCandidates();
+    debugRtc("answer-applied", { signalingState: state.peer.signalingState });
+  } catch (err) {
+    setStatus("No se pudo aplicar la respuesta WebRTC.", "error");
+    debugRtc("answer-apply-error", { message: err.message });
+  }
+}
+
+async function handleIceCandidate(candidate) {
+  try {
+    if (!candidate) return;
+    if (!state.peer || !state.peer.remoteDescription) {
+      state.pendingIceCandidates.push(candidate);
+      debugRtc("ice-candidate-queued", { queued: state.pendingIceCandidates.length });
+      return;
+    }
+    debugRtc("ice-candidate-received", {
+      candidateType: candidate.candidate?.split(" typ ")[1]?.split(" ")[0] || "unknown",
+    });
+    await state.peer.addIceCandidate(new RTCIceCandidate(candidate));
+  } catch (err) {
+    debugRtc("ice-candidate-error", { message: err.message });
+  }
+}
+
+async function applyPendingIceCandidates() {
+  if (!state.peer?.remoteDescription || !state.pendingIceCandidates.length) return;
+
+  const queued = state.pendingIceCandidates.splice(0);
+  debugRtc("ice-candidates-applying", { count: queued.length });
+  for (const candidate of queued) {
+    try {
+      await state.peer.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      debugRtc("queued-ice-candidate-error", { message: err.message });
+    }
+  }
 }
 
 async function loadDeviceList() {
@@ -211,7 +568,6 @@ async function loadDeviceList() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const counts = { videoinput: 0, audioinput: 0, audiooutput: 0 };
-
     state.videoDevices = [];
     state.audioDevices = [];
     state.speakerDevices = [];
@@ -219,11 +575,7 @@ async function loadDeviceList() {
     devices.forEach(device => {
       if (!["videoinput", "audioinput", "audiooutput"].includes(device.kind)) return;
       counts[device.kind] += 1;
-      const item = {
-        id: device.deviceId,
-        label: device.label || fallbackDeviceLabel(device.kind, counts[device.kind]),
-      };
-
+      const item = { id: device.deviceId, label: device.label || fallbackDeviceLabel(device.kind, counts[device.kind]) };
       if (device.kind === "videoinput") state.videoDevices.push(item);
       if (device.kind === "audioinput") state.audioDevices.push(item);
       if (device.kind === "audiooutput") state.speakerDevices.push(item);
@@ -234,9 +586,7 @@ async function loadDeviceList() {
 
     const canChooseSpeaker = typeof $("remoteVideo")?.setSinkId === "function";
     speakerGroup?.classList.toggle("hidden", !canChooseSpeaker);
-    if (canChooseSpeaker) {
-      fillDeviceSelect(speakerSelect, state.speakerDevices, "Salida del sistema", state.speakerId);
-    }
+    if (canChooseSpeaker) fillDeviceSelect(speakerSelect, state.speakerDevices, "Salida del sistema", state.speakerId);
   } catch (err) {
     fillDeviceSelect(cameraSelect, [], "Camara 1", "");
     fillDeviceSelect(microphoneSelect, [], "Microfono 1", "");
@@ -255,369 +605,7 @@ function fillDeviceSelect(select, devices, defaultLabel, selectedId) {
   select.innerHTML = "";
   select.appendChild(new Option(defaultLabel, ""));
   devices.forEach(device => select.appendChild(new Option(device.label, device.id)));
-  if (selectedId && devices.some(device => device.id === selectedId)) {
-    select.value = selectedId;
-  }
-}
-
-function prepareCallScreen(role) {
-  state.role = role;
-  $("localNameLabel").textContent = getDisplayName();
-  $("remoteNameLabel").textContent = "Otra persona";
-  $("remoteVideo").srcObject = null;
-  $("waitingPanel").classList.remove("hidden");
-  $("camOffMsg").textContent = state.camEnabled ? "Camara activa" : "Camara apagada o no disponible.";
-  $("camOffMsg").classList.toggle("hidden", state.camEnabled);
-  $("invitePanel").classList.toggle("hidden", role !== "creator");
-  $("creatorAnswerPanel").classList.toggle("hidden", role !== "creator");
-  $("answerPanel").classList.toggle("hidden", role !== "guest");
-  $("inviteLink").value = "";
-  $("answerCode").value = "";
-  $("creatorAnswerCode").value = "";
-  clearMsg("roomMsg");
-  showScreen("roomScreen");
-  loadDeviceList();
-}
-
-function createPeerConnection() {
-  closePeer();
-
-  const pc = new RTCPeerConnection(getRtcConfig());
-  state.peer = pc;
-  state.remoteStream = new MediaStream();
-  $("remoteVideo").srcObject = state.remoteStream;
-
-  pc.onicecandidate = () => {
-    // Trickle ICE esta desactivado en la practica: esperamos a que ICE termine
-    // y metemos los candidatos dentro de la invitacion/respuesta.
-  };
-
-  pc.ontrack = event => {
-    event.streams[0]?.getTracks().forEach(track => {
-      if (!state.remoteStream.getTracks().some(existing => existing.id === track.id)) {
-        state.remoteStream.addTrack(track);
-      }
-    });
-    applySpeakerOutput(false);
-    $("waitingPanel").classList.add("hidden");
-  };
-
-  pc.onconnectionstatechange = () => {
-    if (pc.connectionState === "connecting") {
-      setStatus("Conectando WebRTC...", "info");
-    }
-
-    if (pc.connectionState === "connected") {
-      setStatus("Llamada conectada.", "success");
-      $("waitingPanel").classList.add("hidden");
-    }
-
-    if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-      setStatus("No se pudo mantener WebRTC. Prueba STUN o una red menos restrictiva.", "error");
-    }
-  };
-
-  pc.oniceconnectionstatechange = () => {
-    if (pc.iceConnectionState === "failed") {
-      setStatus("No se pudo establecer WebRTC. Sin TURN algunas redes no conectan.", "error");
-    }
-  };
-
-  const audioTrack = state.localStream?.getAudioTracks()[0];
-  const videoTrack = state.localStream?.getVideoTracks()[0];
-
-  if (audioTrack) {
-    pc.addTrack(audioTrack, state.localStream);
-  } else {
-    pc.addTransceiver("audio", { direction: "sendrecv" });
-  }
-
-  if (videoTrack) {
-    pc.addTrack(videoTrack, state.localStream);
-  } else {
-    pc.addTransceiver("video", { direction: "sendrecv" });
-  }
-
-  return pc;
-}
-
-function closePeer() {
-  if (state.peer) {
-    state.peer.onicecandidate = null;
-    state.peer.ontrack = null;
-    state.peer.onconnectionstatechange = null;
-    state.peer.oniceconnectionstatechange = null;
-    state.peer.close();
-  }
-  state.peer = null;
-  state.remoteStream = null;
-}
-
-async function createRoom() {
-  clearMsg("createMsg");
-  state.role = "creator";
-  const createButton = $("createRoomButton");
-
-  try {
-    if (createButton) {
-      createButton.disabled = true;
-      createButton.textContent = "Creando sala...";
-    }
-    showMsg("createMsg", "success", "Preparando invitacion...");
-    prepareCallScreen("creator");
-    setStatus("Intentando activar camara y microfono...", "info");
-    await tryStartLocalMedia();
-    prepareCallScreen("creator");
-    setStatus("Generando conexion, espera unos segundos...", "info");
-
-    const pc = createPeerConnection();
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await waitForIceGatheringComplete(pc);
-
-    const inviteCode = await encodeSignal({
-      kind: "invite",
-      name: getDisplayName(),
-      createdAt: Date.now(),
-      usesPublicStun: usePublicStun(),
-      description: pc.localDescription,
-    });
-
-    const link = buildInviteLink(inviteCode);
-    $("inviteLink").value = link;
-    $("invitePanel").classList.remove("hidden");
-    setStatus("Invitacion generada. Copia este enlace y mandaselo a la otra persona.", "success");
-  } catch (err) {
-    const message = friendlyErrorMessage(err);
-    showMsg("createMsg", "error", message);
-    setStatus(message, "error");
-  } finally {
-    if (createButton) {
-      createButton.disabled = false;
-      createButton.textContent = "Crear sala";
-    }
-  }
-}
-
-function buildInviteLink(inviteCode) {
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = "";
-
-  // Respeta rutas de repositorio como /LaFeria/. Si se abre /LaFeria/index.html,
-  // deja el enlace limpio en /LaFeria/#invite=...
-  url.pathname = url.pathname.replace(/index\.html$/i, "");
-  url.hash = `invite=${encodeURIComponent(inviteCode)}`;
-  return url.toString();
-}
-
-function showJoinScreen() {
-  $("incomingInviteCode").value = state.pendingInviteCode || "";
-  $("joinTitle").textContent = state.pendingInviteCode ? "INVITACION DETECTADA" : "UNIRSE A LLAMADA";
-  $("joinHint").textContent = state.pendingInviteCode
-    ? "Invitacion detectada. Pulsa aceptar llamada para generar tu respuesta de aceptacion."
-    : "Pega aqui el enlace o codigo de invitacion que te mandaron.";
-  clearMsg("joinMsg");
-  if (state.pendingInviteCode) {
-    showMsg("joinMsg", "success", "Invitacion detectada. Pulsa aceptar llamada.");
-  }
-  showScreen("joinScreen");
-}
-
-async function acceptCall() {
-  clearMsg("joinMsg");
-  state.role = "guest";
-
-  try {
-    const inviteCode = extractInviteCode($("incomingInviteCode").value || state.pendingInviteCode);
-    if (!inviteCode) throw new Error("Codigo de invitacion no valido o incompleto.");
-
-    const invite = await decodeSignal(inviteCode);
-    if (invite.kind !== "invite" || !invite.description?.sdp) {
-      throw new Error("Codigo de invitacion no valido o incompleto.");
-    }
-
-    showMsg("joinMsg", "success", "Preparando respuesta de aceptacion...");
-    prepareCallScreen("guest");
-    $("remoteNameLabel").textContent = invite.name || "Creador";
-    setStatus("Intentando activar camara y microfono...", "info");
-    await tryStartLocalMedia();
-    $("remoteNameLabel").textContent = invite.name || "Creador";
-    setStatus("Generando respuesta de aceptacion...", "info");
-
-    const pc = createPeerConnection();
-    await pc.setRemoteDescription(new RTCSessionDescription(invite.description));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await waitForIceGatheringComplete(pc);
-
-    const answerCode = await encodeSignal({
-      kind: "answer",
-      name: getDisplayName(),
-      createdAt: Date.now(),
-      usesPublicStun: usePublicStun(),
-      description: pc.localDescription,
-    });
-
-    $("answerCode").value = answerCode;
-    $("answerPanel").classList.remove("hidden");
-    setStatus("Respuesta generada. Devuelvesela al creador para completar la conexion.", "success");
-  } catch (err) {
-    const message = friendlyErrorMessage(err);
-    showMsg("joinMsg", "error", message);
-    setStatus(message, "error");
-  }
-}
-
-async function completeConnection() {
-  clearMsg("roomMsg");
-
-  try {
-    if (!state.peer) throw new Error("Primero crea una invitacion.");
-
-    const answerCode = extractInviteCode($("creatorAnswerCode").value);
-    if (!answerCode) throw new Error("Pega la respuesta de aceptacion completa.");
-
-    const answer = await decodeSignal(answerCode);
-    if (answer.kind !== "answer" || !answer.description?.sdp) {
-      throw new Error("Respuesta de aceptacion no valida o incompleta.");
-    }
-
-    $("remoteNameLabel").textContent = answer.name || "Otra persona";
-    await state.peer.setRemoteDescription(new RTCSessionDescription(answer.description));
-    setStatus("Respuesta aplicada. Conectando WebRTC...", "info");
-    showMsg("roomMsg", "success", "Respuesta aplicada. La llamada deberia conectar en unos segundos.");
-  } catch (err) {
-    showMsg("roomMsg", "error", err.message || "No se pudo aplicar la respuesta.");
-  }
-}
-
-function extractInviteCode(value) {
-  const text = String(value || "").trim();
-  if (!text) return "";
-
-  try {
-    const url = new URL(text);
-    const hashInvite = new URLSearchParams(url.hash.replace(/^#/, "")).get("invite");
-    const queryInvite = url.searchParams.get("invite");
-    return hashInvite || queryInvite || "";
-  } catch (err) {
-    if (text.startsWith("#invite=")) {
-      return new URLSearchParams(text.replace(/^#/, "")).get("invite") || "";
-    }
-    return text;
-  }
-}
-
-function waitForIceGatheringComplete(pc) {
-  if (pc.iceGatheringState === "complete") return Promise.resolve();
-
-  return new Promise(resolve => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      pc.removeEventListener("icegatheringstatechange", onChange);
-      resolve();
-    };
-    const onChange = () => {
-      if (pc.iceGatheringState === "complete") finish();
-    };
-
-    pc.addEventListener("icegatheringstatechange", onChange);
-    setTimeout(finish, 9000);
-  });
-}
-
-async function encodeSignal(data) {
-  const json = JSON.stringify(data);
-
-  if ("CompressionStream" in window) {
-    try {
-      const compressed = await compressText(json);
-      return `${SIGNAL_COMPRESSED_PREFIX}.${bytesToBase64Url(compressed)}`;
-    } catch (err) {
-      // Si la compresion falla, caemos a texto normal codificado.
-    }
-  }
-
-  return `${SIGNAL_PREFIX}.${bytesToBase64Url(new TextEncoder().encode(json))}`;
-}
-
-async function decodeSignal(code) {
-  const clean = String(code || "").trim();
-  const [prefix, payload] = clean.split(".", 2);
-  if (!payload || ![SIGNAL_PREFIX, SIGNAL_COMPRESSED_PREFIX].includes(prefix)) {
-    throw new Error("Codigo de invitacion no valido o incompleto.");
-  }
-
-  const bytes = base64UrlToBytes(payload);
-  const json = prefix === SIGNAL_COMPRESSED_PREFIX
-    ? await decompressText(bytes)
-    : new TextDecoder().decode(bytes);
-
-  return JSON.parse(json);
-}
-
-async function compressText(text) {
-  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
-  const buffer = await new Response(stream).arrayBuffer();
-  return new Uint8Array(buffer);
-}
-
-async function decompressText(bytes) {
-  if (!("DecompressionStream" in window)) {
-    throw new Error("Tu navegador no puede leer este codigo comprimido. Pide a la otra persona que genere el enlace desde un navegador compatible.");
-  }
-
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  return new Response(stream).text();
-}
-
-function bytesToBase64Url(bytes) {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function base64UrlToBytes(value) {
-  const base64 = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-async function copyInvitation() {
-  await copyTextFromInput("inviteLink", "Invitacion copiada. Mandasela a la otra persona.");
-}
-
-async function copyAnswer() {
-  await copyTextFromInput("answerCode", "Respuesta copiada. Devuelvesela al creador.");
-}
-
-async function copyTextFromInput(id, successText) {
-  const input = $(id);
-  const value = input?.value.trim();
-  if (!value) {
-    showMsg("roomMsg", "error", "Todavia no hay nada para copiar.");
-    return;
-  }
-
-  try {
-    await navigator.clipboard.writeText(value);
-    showMsg("roomMsg", "success", successText);
-  } catch (err) {
-    input.focus();
-    input.select();
-    document.execCommand("copy");
-    showMsg("roomMsg", "success", successText);
-  }
+  if (selectedId && devices.some(device => device.id === selectedId)) select.value = selectedId;
 }
 
 async function activateCamera() {
@@ -630,19 +618,10 @@ async function activateMicrophone() {
 
 async function changeCamera(deviceId) {
   state.cameraId = deviceId;
-
   try {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Este navegador no permite usar camara/microfono.");
-    }
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: deviceId ? { deviceId: { exact: deviceId } } : true,
-      audio: false,
-    });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId } } : true, audio: false });
     const [newTrack] = stream.getVideoTracks();
-    if (!newTrack) throw new Error("Camara no disponible. Puedes continuar sin camara.");
-
+    if (!newTrack) throw new Error("Camara no disponible.");
     ensureEditableLocalStream();
     replaceLocalTrack("video", newTrack);
     await replacePeerTrack("video", newTrack);
@@ -653,27 +632,17 @@ async function changeCamera(deviceId) {
     updateControls();
     setStatus("Camara activada.", "success");
   } catch (err) {
-    state.camEnabled = Boolean(state.localStream?.getVideoTracks().length);
+    setStatus("Camara no disponible o apagada.", "error");
     updateControls();
-    setStatus("Camara no disponible. Puedes continuar sin camara.", "error");
   }
 }
 
 async function changeMicrophone(deviceId) {
   state.microphoneId = deviceId;
-
   try {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Este navegador no permite usar camara/microfono.");
-    }
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: false,
-      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
-    });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: deviceId ? { deviceId: { exact: deviceId } } : true });
     const [newTrack] = stream.getAudioTracks();
-    if (!newTrack) throw new Error("Microfono no disponible. Puedes continuar sin microfono.");
-
+    if (!newTrack) throw new Error("Microfono no disponible.");
     ensureEditableLocalStream();
     replaceLocalTrack("audio", newTrack);
     await replacePeerTrack("audio", newTrack);
@@ -682,9 +651,8 @@ async function changeMicrophone(deviceId) {
     updateControls();
     setStatus("Microfono activado.", "success");
   } catch (err) {
-    state.micEnabled = Boolean(state.localStream?.getAudioTracks().length);
+    setStatus("Microfono no disponible o silenciado.", "error");
     updateControls();
-    setStatus("Microfono no disponible. Puedes continuar sin microfono.", "error");
   }
 }
 
@@ -697,11 +665,12 @@ function ensureEditableLocalStream() {
 }
 
 function replaceLocalTrack(kind, newTrack) {
-  const oldTracks = state.localStream.getTracks().filter(track => track.kind === kind);
-  oldTracks.forEach(track => {
-    state.localStream.removeTrack(track);
-    track.stop();
-  });
+  state.localStream.getTracks()
+    .filter(track => track.kind === kind)
+    .forEach(track => {
+      state.localStream.removeTrack(track);
+      track.stop();
+    });
   state.localStream.addTrack(newTrack);
 }
 
@@ -716,11 +685,8 @@ async function replacePeerTrack(kind, newTrack) {
     sender = transceiver?.sender;
   }
 
-  if (sender) {
-    await sender.replaceTrack(newTrack);
-  } else {
-    state.peer.addTrack(newTrack, state.localStream);
-  }
+  if (sender) await sender.replaceTrack(newTrack);
+  else state.peer.addTrack(newTrack, state.localStream);
 }
 
 async function changeSpeaker(deviceId) {
@@ -736,8 +702,41 @@ async function applySpeakerOutput(showFeedback = false) {
     await remoteVideo.setSinkId(state.speakerId);
     if (showFeedback) setStatus("Salida de audio actualizada.", "success");
   } catch (err) {
-    if (showFeedback) setStatus("No se pudo cambiar la salida de audio en este navegador.", "error");
+    if (showFeedback) setStatus("No se pudo cambiar la salida de audio.", "error");
   }
+}
+
+function playRemoteMedia() {
+  const remoteVideo = $("remoteVideo");
+  if (!remoteVideo) return;
+
+  remoteVideo.muted = false;
+  remoteVideo.volume = 1;
+  remoteVideo.play()
+    .then(() => {
+      $("enableRemoteAudioButton")?.classList.add("hidden");
+    })
+    .catch(err => {
+      debugRtc("remote-play-blocked", { message: err.message });
+      $("enableRemoteAudioButton")?.classList.remove("hidden");
+      setStatus("Pulsa Activar audio remoto si no escuchas a la otra persona.", "info");
+    });
+}
+
+function enableRemoteAudio() {
+  const remoteVideo = $("remoteVideo");
+  if (!remoteVideo) return;
+
+  remoteVideo.muted = false;
+  remoteVideo.volume = 1;
+  remoteVideo.play()
+    .then(() => {
+      $("enableRemoteAudioButton")?.classList.add("hidden");
+      setStatus("Audio remoto activado.", "success");
+    })
+    .catch(() => {
+      setStatus("El navegador no permitio reproducir el audio remoto todavia.", "error");
+    });
 }
 
 function toggleSettingsPanel() {
@@ -749,20 +748,14 @@ function closeSettingsPanel() {
 }
 
 function toggleMic() {
-  if (!state.localStream?.getAudioTracks().length) {
-    activateMicrophone();
-    return;
-  }
+  if (!state.localStream?.getAudioTracks().length) return activateMicrophone();
   state.micEnabled = !state.micEnabled;
   state.localStream.getAudioTracks().forEach(track => { track.enabled = state.micEnabled; });
   updateControls();
 }
 
 function toggleCam() {
-  if (!state.localStream?.getVideoTracks().length) {
-    activateCamera();
-    return;
-  }
+  if (!state.localStream?.getVideoTracks().length) return activateCamera();
   state.camEnabled = !state.camEnabled;
   state.localStream.getVideoTracks().forEach(track => { track.enabled = state.camEnabled; });
   $("camOffMsg").classList.toggle("hidden", state.camEnabled);
@@ -779,33 +772,50 @@ function updateControls() {
   $("btnMic")?.classList.toggle("active", micActive);
   $("btnCam")?.classList.toggle("muted-state", !camActive);
   $("btnCam")?.classList.toggle("active", camActive);
-  if ($("micLabel")) $("micLabel").textContent = hasMic ? (state.micEnabled ? "Micro activo" : "Micro silenciado") : "Micro no disponible";
-  if ($("camLabel")) $("camLabel").textContent = hasCam ? (state.camEnabled ? "Camara activa" : "Camara apagada") : "Camara no disponible";
+  if ($("micLabel")) $("micLabel").textContent = hasMic ? (state.micEnabled ? "Micro activo" : "Micro silenciado") : "Microfono no disponible o silenciado";
+  if ($("camLabel")) $("camLabel").textContent = hasCam ? (state.camEnabled ? "Camara activa" : "Camara apagada") : "Camara no disponible o apagada";
 }
 
 function leaveRoom() {
   closeSettingsPanel();
+  send("leave-room");
   closePeer();
   state.localStream?.getTracks().forEach(track => track.stop());
   state.localStream = null;
   state.remoteStream = null;
+  state.pendingIceCandidates = [];
+  state.roomId = "";
+  state.roomName = "";
   state.role = "";
   $("localVideo").srcObject = null;
   $("remoteVideo").srcObject = null;
+  $("enableRemoteAudioButton")?.classList.add("hidden");
   $("waitingPanel").classList.remove("hidden");
   showScreen("menuScreen");
 }
 
-function readInviteFromUrl() {
-  const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  const invite = params.get("invite") || new URLSearchParams(window.location.search).get("invite") || "";
-  if (!invite) return;
+function resetRemoteMedia() {
+  closePeer();
+  state.pendingIceCandidates = [];
+  $("remoteVideo").srcObject = null;
+  $("enableRemoteAudioButton")?.classList.add("hidden");
+  $("waitingPanel").classList.remove("hidden");
+}
 
-  state.pendingInviteCode = invite;
-  showJoinScreen();
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function debugRtc(event, data = {}) {
+  console.log(`[LaFeria WebRTC] ${event}`, data);
 }
 
 window.addEventListener("beforeunload", () => {
+  send("leave-room");
   state.localStream?.getTracks().forEach(track => track.stop());
   closePeer();
 });
@@ -815,4 +825,3 @@ if (navigator.mediaDevices?.addEventListener) {
 }
 
 updateProfileBadge();
-readInviteFromUrl();

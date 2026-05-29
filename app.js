@@ -498,7 +498,7 @@ function prepareCallScreen(role) {
   $('waitingPanel').classList.remove('hidden');
   $('creatorPanel').classList.toggle('hidden', role !== 'creator');
   $('guestPanel').classList.toggle('hidden', role !== 'guest');
-  $('manualPanel').classList.remove('hidden');
+  closeSettingsPanel();
   showScreen('roomScreen');
 }
 
@@ -514,6 +514,7 @@ async function createManualOffer() {
     const code = await createRoomPeer();
     state.peer.on('call', answerIncomingCall);
     $('manualOfferCode').value = code;
+    $('settingsPanel').classList.remove('hidden');
     setStatus('Codigo listo: copia estos 12 digitos y mandaselos a la otra persona.', 'success');
   } catch (err) {
     setStatus(setupErrorMessage(err), 'error');

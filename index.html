@@ -70,7 +70,7 @@
         CREAR LLAMADA
       </div>
       <p class="join-hint">
-        Crea una llamada con un codigo corto de 12 digitos para compartirlo facilmente.
+        Crea una llamada con un codigo corto de 12 digitos. Puedes entrar aunque no tengas camara o microfono.
       </p>
 
       <label class="option-row" for="usePublicStun">
@@ -99,7 +99,7 @@
         UNIRSE A LLAMADA
       </div>
       <p class="join-hint">
-        Pega el codigo corto que te envio la otra persona para entrar en la llamada.
+        Pega el codigo corto que te envio la otra persona. Puedes unirte sin camara o sin microfono.
       </p>
 
       <div class="steps-box">
@@ -134,6 +134,20 @@
         </div>
 
         <div class="settings-section">
+          <div class="settings-device">
+            <label for="audioDeviceSelect">Microfono</label>
+            <select id="audioDeviceSelect" onchange="changeAudioDevice()">
+              <option value="__none__">Sin microfono</option>
+            </select>
+          </div>
+
+          <div class="settings-device">
+            <label for="videoDeviceSelect">Camara</label>
+            <select id="videoDeviceSelect" onchange="changeVideoDevice()">
+              <option value="__none__">Sin camara</option>
+            </select>
+          </div>
+
           <button class="settings-action active" id="btnMic" type="button" onclick="toggleMic()">
             <span class="settings-icon" aria-hidden="true">MIC</span>
             <span>
@@ -149,9 +163,12 @@
               <small>Activa o apaga tu camara.</small>
             </span>
           </button>
+
+          <button class="btn btn-primary btn-full" id="btnMicTest" type="button" onclick="toggleMicTest()">Prueba de microfono</button>
         </div>
 
         <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir</button>
+        <audio id="micTestAudio" class="hidden"></audio>
       </aside>
 
       <section class="call-tile local-tile">

@@ -114,10 +114,10 @@ async function createRoom() {
     state.role = "creator";
     state.roomName = roomName;
     prepareCallScreen("creator");
-    setStatus("Preparando camara/microfono...", "info");
+    setStatus("Preparando invitacion sin bloquear permisos...", "info");
     showScreen("roomScreen");
 
-    await tryStartLocalMedia();
+    if (!state.localStream) setLocalStream(null);
     await loadDeviceList();
 
     setStatus("Generando conexion, espera unos segundos...", "info");
@@ -141,7 +141,7 @@ async function createRoom() {
     $("creatorAnswerPanel").classList.remove("hidden");
     $("answerPanel").classList.add("hidden");
     setStatus("Invitacion generada. Copiala y espera la respuesta de aceptacion.", "success");
-    showMsg("roomMsg", "success", "Invitacion generada. Esta version no usa servidor, asi que la otra persona debe devolverte una respuesta.");
+    showMsg("roomMsg", "success", "Invitacion generada. Puedes activar camara o microfono desde SET sin bloquear la sala.");
   } catch (err) {
     setStatus("No se pudo crear la invitacion WebRTC.", "error");
     showMsg(currentMessageBox(), "error", err.message || "No se pudo crear la llamada.");
@@ -171,10 +171,10 @@ async function acceptCall() {
     state.roomName = invite.roomName || "La Feria";
     prepareCallScreen("guest");
     showScreen("roomScreen");
-    setStatus("Preparando camara/microfono...", "info");
+    setStatus("Preparando respuesta sin bloquear permisos...", "info");
 
     if ($("joinUsePublicStun")) $("joinUsePublicStun").checked = Boolean(invite.stun);
-    await tryStartLocalMedia();
+    if (!state.localStream) setLocalStream(null);
     await loadDeviceList();
 
     setStatus("Conectando WebRTC...", "info");

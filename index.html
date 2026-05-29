@@ -48,7 +48,7 @@
   <section class="screen hidden" id="profileScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">&larr;</button>
         EDITAR PERFIL
       </div>
       <div class="form-group">
@@ -66,7 +66,7 @@
   <section class="screen hidden" id="createScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">&larr;</button>
         CREAR LLAMADA
       </div>
       <p class="join-hint">
@@ -83,7 +83,7 @@
       <div class="steps-box">
         <strong>Para quien crea la llamada</strong>
         <span>Paso 1: pulsa crear llamada.</span>
-        <span>Paso 2: copia el codigo corto y mandaselo a la otra persona.</span>
+        <span>Paso 2: abre ajustes arriba a la derecha para copiar el codigo.</span>
         <span>Paso 3: espera a que se una.</span>
       </div>
 
@@ -95,7 +95,7 @@
   <section class="screen hidden" id="joinScreen">
     <div class="card form-card">
       <div class="screen-title">
-        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">←</button>
+        <button class="back-btn" type="button" onclick="showScreen('menuScreen')" aria-label="Volver">&larr;</button>
         UNIRSE A LLAMADA
       </div>
       <p class="join-hint">
@@ -122,7 +122,7 @@
 
   <section class="screen hidden" id="roomScreen">
     <div class="call-stage">
-      <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">⚙</button>
+      <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">&#9881;</button>
 
       <aside class="settings-panel hidden" id="settingsPanel" aria-label="Configuracion de llamada">
         <div class="settings-header">
@@ -130,7 +130,22 @@
             <span class="settings-kicker">Cabina de control</span>
             <h2>Ajustes</h2>
           </div>
-          <button class="settings-close" type="button" aria-label="Cerrar configuracion" onclick="closeSettingsPanel()">×</button>
+          <button class="settings-close" type="button" aria-label="Cerrar configuracion" onclick="closeSettingsPanel()">&times;</button>
+        </div>
+
+        <div class="call-status info" id="callStatus">
+          Comparte el codigo corto para empezar.
+        </div>
+
+        <div class="settings-room" id="creatorPanel">
+          <label for="manualOfferCode">Codigo de llamada</label>
+          <input id="manualOfferCode" class="signal-code room-code-field" readonly>
+          <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualOfferCode')">Copiar codigo</button>
+        </div>
+
+        <div class="settings-room hidden" id="guestPanel">
+          <strong>Uniendote a la llamada...</strong>
+          <span>Mantente en esta pantalla mientras se establece la conexion.</span>
         </div>
 
         <div class="settings-section">
@@ -183,29 +198,6 @@
           <span>Esperando a la otra persona...</span>
         </div>
         <div class="person-label">Otra persona</div>
-      </section>
-
-      <section class="manual-panel" id="manualPanel">
-        <div class="call-status info" id="callStatus">
-          Comparte el codigo corto para empezar.
-        </div>
-
-        <div class="manual-role-panel" id="creatorPanel">
-          <h2>Creador de la llamada</h2>
-          <div class="manual-step">
-            <strong>Codigo corto de llamada</strong>
-            <input id="manualOfferCode" class="signal-code room-code-field" readonly>
-            <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualOfferCode')">Copiar codigo</button>
-          </div>
-        </div>
-
-        <div class="manual-role-panel hidden" id="guestPanel">
-          <h2>Persona que se une</h2>
-          <div class="manual-step">
-            <strong>Conectando con el creador de la llamada...</strong>
-            <p class="join-hint">Mantente en esta pantalla mientras se establece la conexion.</p>
-          </div>
-        </div>
       </section>
     </div>
   </section>

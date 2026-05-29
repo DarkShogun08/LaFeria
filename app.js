@@ -16,6 +16,12 @@ const state = {
   currentCall: null,
   localStream: null,
   remoteStream: null,
+  selectedAudioDeviceId: '',
+  selectedVideoDeviceId: '',
+  audioFallbackContext: null,
+  audioFallbackOscillator: null,
+  videoFallbackCanvas: null,
+  micTestStream: null,
   micEnabled: true,
   camEnabled: true,
 };
@@ -125,20 +131,207 @@ function setupErrorMessage(err) {
   return err?.type ? peerErrorMessage(err) : mediaErrorMessage(err);
 }
 
+function markFallbackTrack(track, cleanup) {
+  track.isLaFeriaFallback = true;
+  if (cleanup) track.laFeriaCleanup = cleanup;
+  return track;
+}
+
+function isFallbackTrack(track) {
+  return Boolean(track?.isLaFeriaFallback);
+}
+
+function getLocalTrack(kind) {
+  return state.localStream?.getTracks().find(track => track.kind === kind) || null;
+}
+
+function createSilentAudioTrack() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+
+  const audioContext = new AudioContextClass();
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const destination = audioContext.createMediaStreamDestination();
+
+  gain.gain.value = 0;
+  oscillator.connect(gain);
+  gain.connect(destination);
+  oscillator.start();
+
+  state.audioFallbackContext = audioContext;
+  state.audioFallbackOscillator = oscillator;
+
+  const track = destination.stream.getAudioTracks()[0];
+  track.enabled = false;
+  return markFallbackTrack(track, () => {
+    try {
+      oscillator.stop();
+    } catch (err) {
+      // Puede estar ya detenido.
+    }
+    audioContext.close?.();
+  });
+}
+
+function createBlackVideoTrack() {
+  const canvas = document.createElement('canvas');
+  if (!canvas.captureStream) return null;
+
+  canvas.width = 640;
+  canvas.height = 360;
+
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#060812';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  state.videoFallbackCanvas = canvas;
+
+  const stream = canvas.captureStream(5);
+  const track = stream.getVideoTracks()[0];
+  track.enabled = false;
+  return markFallbackTrack(track);
+}
+
+function stopTrack(track) {
+  if (!track) return;
+  track.laFeriaCleanup?.();
+  track.stop();
+}
+
+function stopFallbackHelpers() {
+  try {
+    state.audioFallbackOscillator?.stop();
+  } catch (err) {
+    // Puede estar ya detenido.
+  }
+
+  state.audioFallbackContext?.close?.();
+  state.audioFallbackContext = null;
+  state.audioFallbackOscillator = null;
+  state.videoFallbackCanvas = null;
+}
+
+function deviceConstraint(kind, deviceId) {
+  if (deviceId && deviceId !== '__default__' && deviceId !== '__none__') {
+    return { deviceId: { exact: deviceId } };
+  }
+
+  if (kind === 'video') {
+    return { width: { ideal: 1280 }, height: { ideal: 720 } };
+  }
+
+  return true;
+}
+
+async function getDeviceTrack(kind, deviceId) {
+  if (!navigator.mediaDevices?.getUserMedia || deviceId === '__none__') return null;
+
+  const constraints = {
+    audio: kind === 'audio' ? deviceConstraint(kind, deviceId) : false,
+    video: kind === 'video' ? deviceConstraint(kind, deviceId) : false,
+  };
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  return stream.getTracks()[0] || null;
+}
+
+async function getOutgoingTrack(kind, deviceId) {
+  try {
+    const track = await getDeviceTrack(kind, deviceId);
+    if (track) return track;
+  } catch (err) {
+    console.warn(`No se pudo abrir ${kind}. Se usara pista vacia.`, err);
+  }
+
+  return kind === 'audio' ? createSilentAudioTrack() : createBlackVideoTrack();
+}
+
+async function replaceLocalTrack(kind, nextTrack) {
+  if (!state.localStream) return;
+
+  const oldTrack = getLocalTrack(kind);
+  if (nextTrack) {
+    const enabled = kind === 'audio' ? state.micEnabled : state.camEnabled;
+    nextTrack.enabled = !isFallbackTrack(nextTrack) && enabled;
+  }
+
+  if (oldTrack) {
+    state.localStream.removeTrack(oldTrack);
+  }
+  if (nextTrack) {
+    state.localStream.addTrack(nextTrack);
+  }
+
+  const sender = state.currentCall?.peerConnection
+    ?.getSenders()
+    .find(item => item.track?.kind === kind || oldTrack?.kind === kind);
+  if (sender) {
+    await sender.replaceTrack(nextTrack);
+  }
+
+  if (oldTrack && oldTrack !== nextTrack) {
+    stopTrack(oldTrack);
+  }
+
+  $('localVideo').srcObject = state.localStream;
+}
+
+async function refreshDeviceLists() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    updateDeviceSelect('audioDeviceSelect', devices.filter(device => device.kind === 'audioinput'), state.selectedAudioDeviceId, 'microfono');
+    updateDeviceSelect('videoDeviceSelect', devices.filter(device => device.kind === 'videoinput'), state.selectedVideoDeviceId, 'camara');
+  } catch (err) {
+    console.warn('No se pudieron leer los dispositivos.', err);
+  }
+}
+
+function updateDeviceSelect(id, devices, selectedValue, emptyLabel) {
+  const select = $(id);
+  if (!select) return;
+
+  const current = selectedValue || select.value || '__default__';
+  select.innerHTML = '';
+
+  const noneOption = document.createElement('option');
+  noneOption.value = '__none__';
+  noneOption.textContent = `Sin ${emptyLabel}`;
+  select.appendChild(noneOption);
+
+  if (devices.length > 0) {
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '__default__';
+    defaultOption.textContent = `${emptyLabel[0].toUpperCase()}${emptyLabel.slice(1)} predeterminado`;
+    select.appendChild(defaultOption);
+  }
+
+  devices.forEach((device, index) => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.textContent = device.label || `${emptyLabel[0].toUpperCase()}${emptyLabel.slice(1)} ${index + 1}`;
+    select.appendChild(option);
+  });
+
+  select.value = Array.from(select.options).some(option => option.value === current)
+    ? current
+    : (devices.length > 0 ? '__default__' : '__none__');
+}
+
 async function ensureLocalMedia() {
   if (state.localStream) return state.localStream;
 
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('Este navegador no soporta getUserMedia.');
-  }
+  const audioTrack = await getOutgoingTrack('audio', state.selectedAudioDeviceId || '__default__');
+  const videoTrack = await getOutgoingTrack('video', state.selectedVideoDeviceId || '__default__');
 
-  const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  state.localStream = stream;
-  state.micEnabled = stream.getAudioTracks().some(track => track.enabled);
-  state.camEnabled = stream.getVideoTracks().some(track => track.enabled);
-  $('localVideo').srcObject = stream;
+  state.localStream = new MediaStream([audioTrack, videoTrack].filter(Boolean));
+  state.micEnabled = Boolean(audioTrack && !isFallbackTrack(audioTrack));
+  state.camEnabled = Boolean(videoTrack && !isFallbackTrack(videoTrack));
+  $('localVideo').srcObject = state.localStream;
+  await refreshDeviceLists();
   updateControls();
-  return stream;
+  return state.localStream;
 }
 
 function generateRoomCode() {
@@ -222,6 +415,35 @@ function attachRemoteStream(stream) {
   $('remoteVideo').srcObject = stream;
   $('waitingPanel').classList.add('hidden');
   setStatus('Conexion establecida.', 'success');
+}
+
+async function changeAudioDevice() {
+  const select = $('audioDeviceSelect');
+  if (!select || !state.localStream) return;
+
+  stopMicTest();
+  state.selectedAudioDeviceId = select.value;
+  state.micEnabled = select.value !== '__none__';
+
+  const nextTrack = await getOutgoingTrack('audio', select.value);
+  await replaceLocalTrack('audio', nextTrack);
+  await refreshDeviceLists();
+  updateControls();
+  setStatus(!nextTrack || isFallbackTrack(nextTrack) ? 'Microfono desactivado o no disponible.' : 'Microfono actualizado.', !nextTrack || isFallbackTrack(nextTrack) ? 'info' : 'success');
+}
+
+async function changeVideoDevice() {
+  const select = $('videoDeviceSelect');
+  if (!select || !state.localStream) return;
+
+  state.selectedVideoDeviceId = select.value;
+  state.camEnabled = select.value !== '__none__';
+
+  const nextTrack = await getOutgoingTrack('video', select.value);
+  await replaceLocalTrack('video', nextTrack);
+  await refreshDeviceLists();
+  updateControls();
+  setStatus(!nextTrack || isFallbackTrack(nextTrack) ? 'Camara desactivada o no disponible.' : 'Camara actualizada.', !nextTrack || isFallbackTrack(nextTrack) ? 'info' : 'success');
 }
 
 function bindCallEvents(call) {
@@ -363,23 +585,100 @@ async function pasteCode(id) {
 }
 
 function toggleMic() {
+  const track = getLocalTrack('audio');
+  if (!track || isFallbackTrack(track)) {
+    state.micEnabled = false;
+    updateControls();
+    setStatus('No hay microfono activo. Elige uno en ajustes.', 'info');
+    return;
+  }
+
   state.micEnabled = !state.micEnabled;
-  state.localStream?.getAudioTracks().forEach(track => { track.enabled = state.micEnabled; });
+  track.enabled = state.micEnabled;
   updateControls();
 }
 
 function toggleCam() {
+  const track = getLocalTrack('video');
+  if (!track || isFallbackTrack(track)) {
+    state.camEnabled = false;
+    updateControls();
+    setStatus('No hay camara activa. Elige una en ajustes.', 'info');
+    return;
+  }
+
   state.camEnabled = !state.camEnabled;
-  state.localStream?.getVideoTracks().forEach(track => { track.enabled = state.camEnabled; });
-  $('camOffMsg').classList.toggle('hidden', state.camEnabled);
+  track.enabled = state.camEnabled;
   updateControls();
 }
 
 function updateControls() {
-  $('micLabel').textContent = state.micEnabled ? 'Micro activo' : 'Micro silenciado';
-  $('camLabel').textContent = state.camEnabled ? 'Camara activa' : 'Camara apagada';
-  $('btnMic').classList.toggle('muted-state', !state.micEnabled);
-  $('btnCam').classList.toggle('muted-state', !state.camEnabled);
+  const audioTrack = getLocalTrack('audio');
+  const videoTrack = getLocalTrack('video');
+  const hasMic = Boolean(audioTrack && !isFallbackTrack(audioTrack));
+  const hasCam = Boolean(videoTrack && !isFallbackTrack(videoTrack));
+
+  $('micLabel').textContent = hasMic
+    ? (state.micEnabled ? 'Micro activo' : 'Micro silenciado')
+    : 'Sin microfono';
+  $('camLabel').textContent = hasCam
+    ? (state.camEnabled ? 'Camara activa' : 'Camara apagada')
+    : 'Sin camara';
+  $('btnMic').classList.toggle('active', hasMic && state.micEnabled);
+  $('btnCam').classList.toggle('active', hasCam && state.camEnabled);
+  $('btnMic').classList.toggle('muted-state', !hasMic || !state.micEnabled);
+  $('btnCam').classList.toggle('muted-state', !hasCam || !state.camEnabled);
+  $('camOffMsg').classList.toggle('hidden', hasCam && state.camEnabled);
+}
+
+async function toggleMicTest() {
+  if (state.micTestStream) {
+    stopMicTest();
+    return;
+  }
+
+  try {
+    const deviceId = $('audioDeviceSelect')?.value || state.selectedAudioDeviceId || '__default__';
+    if (deviceId === '__none__') {
+      setStatus('Elige un microfono para probarlo.', 'info');
+      return;
+    }
+
+    const track = await getDeviceTrack('audio', deviceId);
+    if (!track) {
+      setStatus('No se pudo abrir ningun microfono para la prueba.', 'error');
+      return;
+    }
+
+    state.micTestStream = new MediaStream([track]);
+    const audio = $('micTestAudio');
+    audio.srcObject = state.micTestStream;
+    audio.muted = false;
+    audio.volume = 1;
+    await audio.play();
+
+    $('btnMicTest').textContent = 'Detener prueba de microfono';
+    setStatus('Prueba activa: te estas escuchando con el microfono seleccionado.', 'success');
+  } catch (err) {
+    stopMicTest();
+    setStatus(mediaErrorMessage(err), 'error');
+  }
+}
+
+function stopMicTest() {
+  if (!state.micTestStream) return;
+
+  state.micTestStream.getTracks().forEach(track => track.stop());
+  state.micTestStream = null;
+
+  const audio = $('micTestAudio');
+  if (audio) {
+    audio.pause();
+    audio.srcObject = null;
+  }
+
+  const button = $('btnMicTest');
+  if (button) button.textContent = 'Prueba de microfono';
 }
 
 function toggleSettingsPanel() {
@@ -397,10 +696,14 @@ function clearField(id) {
 
 function leaveRoom() {
   closePeer();
+  stopMicTest();
   state.localStream?.getTracks().forEach(track => track.stop());
+  stopFallbackHelpers();
   state.localStream = null;
   state.remoteStream = null;
   state.role = '';
+  state.micEnabled = true;
+  state.camEnabled = true;
 
   $('localVideo').srcObject = null;
   $('remoteVideo').srcObject = null;

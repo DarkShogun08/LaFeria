@@ -78,12 +78,12 @@ textarea {
 .menu-canopy {
   position: fixed;
   inset: 0 0 auto;
-  height: min(35vh, 270px);
+  height: min(31vh, 235px);
   background:
-    radial-gradient(circle at 50% 100%, rgba(255, 243, 207, 0.95) 0 15%, transparent 16%),
-    repeating-linear-gradient(90deg, #e9143f 0 8vw, #fff3cf 8vw 16vw);
-  clip-path: polygon(0 0, 100% 0, 100% 68%, 94% 82%, 88% 68%, 82% 82%, 76% 68%, 70% 82%, 64% 68%, 58% 82%, 52% 68%, 46% 82%, 40% 68%, 34% 82%, 28% 68%, 22% 82%, 16% 68%, 10% 82%, 4% 68%, 0 78%);
-  filter: drop-shadow(0 24px 26px rgba(0, 0, 0, 0.32));
+    linear-gradient(180deg, rgba(255, 243, 207, 0.35), rgba(0, 0, 0, 0.06) 54%, rgba(0, 0, 0, 0.28)),
+    repeating-linear-gradient(90deg, #d40d28 0 7.5vw, #fff0cc 7.5vw 15vw);
+  clip-path: polygon(0 0, 100% 0, 100% 72%, 96% 84%, 92% 72%, 88% 84%, 84% 72%, 80% 84%, 76% 72%, 72% 84%, 68% 72%, 64% 84%, 60% 72%, 56% 84%, 52% 72%, 48% 84%, 44% 72%, 40% 84%, 36% 72%, 32% 84%, 28% 72%, 24% 84%, 20% 72%, 16% 84%, 12% 72%, 8% 84%, 4% 72%, 0 84%);
+  filter: drop-shadow(0 22px 24px rgba(0, 0, 0, 0.34));
 }
 
 .menu-center {
@@ -91,7 +91,7 @@ textarea {
 }
 
 .logo-wrap {
-  margin-bottom: 20px;
+  margin-bottom: 14px;
   text-align: center;
 }
 
@@ -101,16 +101,26 @@ textarea {
   position: relative;
   line-height: 0.9;
   isolation: isolate;
+  padding: 14px 24px 16px;
+  border: 5px solid rgba(24, 19, 5, 0.88);
+  border-radius: 22px 22px 10px 10px;
+  background:
+    radial-gradient(circle, #fff8bc 0 27%, transparent 31%) 10px 10px / 34px 34px,
+    linear-gradient(180deg, #ffec8a, #f6b73c 46%, #c94b14);
+  box-shadow:
+    0 10px 0 rgba(0, 0, 0, 0.26),
+    0 24px 42px rgba(0, 0, 0, 0.36),
+    inset 0 0 0 3px rgba(255, 255, 255, 0.24);
 }
 
 .logo-script {
   position: absolute;
-  top: 4%;
-  left: 42%;
+  top: 13px;
+  left: 50%;
   z-index: 4;
   color: #050505;
   font-family: "Brush Script MT", "Segoe Script", Georgia, serif;
-  font-size: clamp(2.3rem, 6vw, 5rem);
+  font-size: clamp(2.2rem, 4.5vw, 3.9rem);
   font-weight: 900;
   letter-spacing: 0;
   text-shadow:
@@ -118,50 +128,62 @@ textarea {
     -2px 0 0 #fff,
     0 2px 0 #fff,
     0 8px 0 rgba(0, 0, 0, 0.12);
-  transform: rotate(-5deg);
+  transform: translateX(-50%) rotate(-4deg);
+}
+
+.fair-logo-menu .logo-script {
+  left: 27%;
+  top: 12px;
 }
 
 .logo-cloud {
   position: relative;
   z-index: 1;
-  width: min(520px, 88vw);
-  height: clamp(96px, 12vw, 132px);
-  margin-bottom: clamp(-44px, -4.2vw, -28px);
-  border-radius: 50% 50% 44% 44% / 54% 54% 42% 42%;
-  background: #fff;
+  width: min(500px, 76vw);
+  height: clamp(68px, 7.4vw, 86px);
+  margin-bottom: clamp(-22px, -2vw, -14px);
+  border: 4px solid rgba(24, 19, 5, 0.88);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 52%, #ff2525 0 15%, #c90012 16% 25%, transparent 26%),
+    linear-gradient(180deg, #fffdf5, #fff4d4);
   box-shadow:
-    inset 0 -14px 0 rgba(0, 0, 0, 0.05),
-    0 18px 0 rgba(196, 0, 16, 0.82),
-    0 26px 34px rgba(0, 0, 0, 0.24);
+    inset 0 -8px 0 rgba(0, 0, 0, 0.06),
+    0 10px 0 rgba(0, 0, 0, 0.16);
 }
 
 .logo-ear {
   position: absolute;
-  top: 34%;
-  width: 34%;
-  height: 54%;
-  border-radius: 50%;
-  background: #ff2525;
-  box-shadow: 0 30px 0 #bd0000;
+  top: 21%;
+  width: 24%;
+  height: 58%;
+  border: 4px solid rgba(24, 19, 5, 0.82);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, #fff8bc 0 20%, transparent 23%) 8px 50% / 24px 24px repeat-x,
+    linear-gradient(180deg, #ff3131, #bd0000);
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.2);
 }
 
 .logo-ear-left {
-  left: -13%;
+  left: -9%;
 }
 
 .logo-ear-right {
-  right: -13%;
+  right: -9%;
 }
 
 .logo-nose {
   position: absolute;
   left: 50%;
-  top: 46%;
-  width: clamp(78px, 10vw, 126px);
-  height: clamp(60px, 7.5vw, 96px);
+  top: 56%;
+  width: clamp(48px, 6vw, 78px);
+  height: clamp(36px, 4.3vw, 54px);
   border-radius: 50%;
   background: #ff2525;
-  box-shadow: inset 18px -14px 0 rgba(190, 0, 0, 0.42);
+  box-shadow:
+    inset 10px -8px 0 rgba(190, 0, 0, 0.42),
+    0 4px 0 rgba(0, 0, 0, 0.18);
   transform: translate(-50%, -50%);
 }
 
@@ -178,11 +200,11 @@ textarea {
 
 .logo-balloon {
   position: absolute;
-  top: 12%;
-  right: 26%;
-  width: clamp(42px, 5vw, 72px);
-  height: clamp(62px, 7vw, 98px);
-  border: 7px solid #050505;
+  top: 14px;
+  right: 19%;
+  width: clamp(30px, 4vw, 44px);
+  height: clamp(42px, 5vw, 60px);
+  border: 5px solid #050505;
   border-radius: 52% 48% 48% 52%;
   background: #ffd400;
   transform: rotate(-25deg);
@@ -191,11 +213,11 @@ textarea {
 .logo-balloon::after {
   content: "";
   position: absolute;
-  right: -15px;
-  bottom: -26px;
-  width: 22px;
-  height: 42px;
-  border-right: 7px solid #050505;
+  right: -10px;
+  bottom: -20px;
+  width: 16px;
+  height: 32px;
+  border-right: 5px solid #050505;
   border-radius: 50%;
   transform: rotate(-6deg);
 }
@@ -204,24 +226,24 @@ textarea {
   display: flex;
   position: relative;
   z-index: 3;
-  gap: clamp(1px, 0.35vw, 5px);
-  filter: drop-shadow(0 20px 18px rgba(0, 0, 0, 0.32));
+  gap: clamp(3px, 0.6vw, 7px);
+  filter: drop-shadow(0 12px 12px rgba(0, 0, 0, 0.26));
 }
 
 .logo-word span {
-  width: clamp(48px, 7vw, 84px);
-  height: clamp(80px, 10vw, 122px);
+  width: clamp(46px, 6.5vw, 76px);
+  height: clamp(72px, 8.8vw, 106px);
   display: grid;
   place-items: center;
   border: clamp(4px, 0.55vw, 8px) solid rgba(24, 19, 5, 0.88);
   border-radius: 46% 42% 12% 12% / 18% 22% 10% 10%;
   color: rgba(15, 18, 18, 0.9);
   font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
-  font-size: clamp(3rem, 7vw, 6.1rem);
+  font-size: clamp(2.8rem, 6.5vw, 5.35rem);
   line-height: 1;
   box-shadow:
-    inset 0 -18px 24px rgba(0, 0, 0, 0.16),
-    0 12px 0 rgba(0, 0, 0, 0.18);
+    inset 0 -12px 20px rgba(0, 0, 0, 0.15),
+    0 8px 0 rgba(0, 0, 0, 0.18);
 }
 
 .logo-word span:nth-child(1) { background: #d61bdc; transform: rotate(-10deg) translateY(10px); }
@@ -231,24 +253,44 @@ textarea {
 .logo-word span:nth-child(5) { background: #ff7417; transform: rotate(10deg) translateY(11px); }
 
 .fair-logo-divider {
-  width: 176px;
+  width: 84px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  border-width: 3px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 46%, #fff8dd 0 27%, transparent 28%),
+    radial-gradient(circle at 50% 50%, #ff2525 0 22%, transparent 23%),
+    conic-gradient(from -18deg, #d61bdc 0 20%, #50c2cc 20% 40%, #7df200 40% 60%, #f5ff00 60% 80%, #ff7417 80% 100%);
   pointer-events: none;
+  box-shadow:
+    0 0 0 6px #020202,
+    0 0 0 10px rgba(255, 243, 207, 0.9),
+    0 12px 22px rgba(0, 0, 0, 0.52),
+    inset 0 -10px 18px rgba(0, 0, 0, 0.18);
 }
 
 .fair-logo-divider .logo-cloud {
-  width: 164px;
-  height: 56px;
-  margin-bottom: -22px;
-  box-shadow:
-    inset 0 -5px 0 rgba(0, 0, 0, 0.05),
-    0 7px 0 rgba(196, 0, 16, 0.82),
-    0 12px 20px rgba(0, 0, 0, 0.38);
+  position: absolute;
+  inset: 8px;
+  width: auto;
+  height: auto;
+  margin: 0;
+  border: 3px solid rgba(24, 19, 5, 0.9);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 31%, #fffdf5 0 23%, transparent 24%),
+    radial-gradient(circle at 50% 38%, #ff2525 0 12%, #c90012 13% 19%, transparent 20%),
+    transparent;
+  box-shadow: inset 0 -7px 10px rgba(0, 0, 0, 0.18);
 }
 
 .fair-logo-divider .logo-script {
-  top: 1px;
-  left: 42%;
-  font-size: 2.1rem;
+  top: 10px;
+  left: 38%;
+  font-size: 0.78rem;
   text-shadow:
     1px 0 0 #fff,
     -1px 0 0 #fff,
@@ -256,36 +298,42 @@ textarea {
 }
 
 .fair-logo-divider .logo-nose {
-  width: 38px;
-  height: 28px;
+  top: 33%;
+  width: 14px;
+  height: 10px;
 }
 
 .fair-logo-divider .logo-balloon {
-  width: 22px;
-  height: 31px;
-  border-width: 3px;
+  display: none;
+  top: 7px;
+  width: 14px;
+  height: 20px;
+  border-width: 2px;
 }
 
 .fair-logo-divider .logo-balloon::after {
-  right: -7px;
-  bottom: -14px;
-  width: 10px;
-  height: 20px;
-  border-right-width: 3px;
+  right: -5px;
+  bottom: -9px;
+  width: 7px;
+  height: 13px;
+  border-right-width: 2px;
 }
 
 .fair-logo-divider .logo-word {
+  align-self: end;
   gap: 0;
+  margin-bottom: 10px;
 }
 
 .fair-logo-divider .logo-word span {
-  width: 31px;
-  height: 54px;
-  border-width: 3px;
-  font-size: 2.35rem;
+  width: 12px;
+  height: 21px;
+  border-width: 2px;
+  border-radius: 46% 42% 30% 30% / 18% 22% 22% 22%;
+  font-size: 0.78rem;
   box-shadow:
-    inset 0 -7px 9px rgba(0, 0, 0, 0.16),
-    0 5px 0 rgba(0, 0, 0, 0.2);
+    inset 0 -5px 7px rgba(0, 0, 0, 0.16),
+    0 3px 0 rgba(0, 0, 0, 0.2);
 }
 
 .card {
@@ -308,7 +356,7 @@ textarea {
 }
 
 .menu-card {
-  padding: 24px;
+  padding: 22px;
   border: 5px solid rgba(255, 218, 76, 0.88);
   background:
     radial-gradient(ellipse at 50% 0, rgba(255, 215, 87, 0.18), transparent 34%),

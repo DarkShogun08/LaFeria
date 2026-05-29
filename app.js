@@ -1,10 +1,8 @@
 // La Feria - version estatica para GitHub Pages.
-// Esta app usa WebRTC en modo manual: no hay backend ni APIs de pago.
+// Usa WebRTC con PeerJS para que el codigo compartido sea corto.
 
-// STUN publico opcional:
-// - Ayuda a encontrar rutas entre navegadores, sobre todo si estan en redes distintas.
-// - No crea salas, no sustituye la senalizacion y no retransmite audio/video.
-// - Si quieres cero dependencias externas, desmarca "Usar STUN publico".
+const ROOM_CODE_LENGTH = 12;
+
 const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -15,6 +13,7 @@ const state = {
   profile: localStorage.getItem('la_feria_profile') || '',
   role: '',
   peer: null,
+  currentCall: null,
   localStream: null,
   remoteStream: null,
   micEnabled: true,
@@ -97,7 +96,33 @@ function mediaErrorMessage(err) {
     return 'La camara o el microfono estan siendo usados por otra aplicacion.';
   }
 
-  return 'No se pudo acceder a camara/microfono. Revisa permisos y vuelve a intentarlo.';
+  return err?.message || 'No se pudo acceder a camara/microfono. Revisa permisos y vuelve a intentarlo.';
+}
+
+function peerErrorMessage(err) {
+  const type = err?.type || '';
+
+  if (type === 'unavailable-id') {
+    return 'Ese codigo ya esta en uso. Prueba a crear otra llamada.';
+  }
+
+  if (type === 'peer-unavailable') {
+    return 'No se encontro ninguna llamada con ese codigo. Revisa los digitos y vuelve a intentarlo.';
+  }
+
+  if (type === 'network' || type === 'server-error' || type === 'socket-error') {
+    return 'No se pudo contactar con el servidor de conexion. Revisa internet y prueba otra vez.';
+  }
+
+  if (type === 'browser-incompatible' || type === 'webrtc') {
+    return 'Este navegador no soporta la llamada WebRTC correctamente.';
+  }
+
+  return err?.message || 'No se pudo preparar la conexion.';
+}
+
+function setupErrorMessage(err) {
+  return err?.type ? peerErrorMessage(err) : mediaErrorMessage(err);
 }
 
 async function ensureLocalMedia() {
@@ -116,159 +141,132 @@ async function ensureLocalMedia() {
   return stream;
 }
 
-function createPeerConnection() {
+function generateRoomCode() {
+  const bytes = new Uint8Array(ROOM_CODE_LENGTH);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, byte => String(byte % 10)).join('');
+}
+
+function normalizeRoomCode(value) {
+  return String(value || '').replace(/\s+/g, '');
+}
+
+function validateRoomCode(value) {
+  const code = normalizeRoomCode(value);
+  if (!/^\d{10,20}$/.test(code)) {
+    throw new Error('El codigo debe tener entre 10 y 20 digitos.');
+  }
+  return code;
+}
+
+function createSignalingPeer(peerId) {
+  if (!window.Peer) {
+    throw new Error('No se pudo cargar PeerJS. Revisa la conexion a internet y vuelve a abrir la pagina.');
+  }
+
   closePeer();
 
-  const pc = new RTCPeerConnection(getRtcConfig());
-  state.peer = pc;
-  state.remoteStream = new MediaStream();
-  $('remoteVideo').srcObject = state.remoteStream;
+  const peer = new Peer(peerId || undefined, {
+    config: getRtcConfig(),
+    debug: 1,
+  });
 
-  // Los candidatos ICE se recopilan antes de copiar el codigo. Asi no hace falta
-  // enviar mensajes extra por un servidor.
-  pc.ontrack = event => {
-    event.streams[0]?.getTracks().forEach(track => {
-      if (!state.remoteStream.getTracks().some(existing => existing.id === track.id)) {
-        state.remoteStream.addTrack(track);
+  state.peer = peer;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = callback => value => {
+      if (settled) return;
+      settled = true;
+      callback(value);
+    };
+
+    peer.on('open', settle(resolve));
+    peer.on('error', err => {
+      if (!settled) {
+        settled = true;
+        peer.destroy();
+        state.peer = null;
+        reject(err);
+        return;
       }
+
+      setStatus(peerErrorMessage(err), 'error');
     });
-    $('waitingPanel').classList.add('hidden');
-  };
-
-  pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'connected') {
-      setStatus('Conexion establecida.', 'success');
-      $('waitingPanel').classList.add('hidden');
-    }
-
-    if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
-      setStatus('No se pudo establecer la llamada. Revisa HTTPS, permisos y que ambos copien los codigos completos.', 'error');
-    }
-  };
-
-  pc.oniceconnectionstatechange = () => {
-    if (pc.iceConnectionState === 'failed') {
-      setStatus('ICE fallo. Prueba con STUN activado o con ambos dispositivos en una red menos restrictiva.', 'error');
-    }
-  };
-
-  state.localStream.getTracks().forEach(track => pc.addTrack(track, state.localStream));
-  return pc;
-}
-
-function closePeer() {
-  if (state.peer) {
-    state.peer.ontrack = null;
-    state.peer.onconnectionstatechange = null;
-    state.peer.oniceconnectionstatechange = null;
-    state.peer.close();
-  }
-  state.peer = null;
-}
-
-async function waitForIceGatheringComplete(pc) {
-  if (pc.iceGatheringState === 'complete') return;
-
-  await new Promise(resolve => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      pc.removeEventListener('icegatheringstatechange', onChange);
-      resolve();
-    };
-    const onChange = () => {
-      if (pc.iceGatheringState === 'complete') finish();
-    };
-
-    pc.addEventListener('icegatheringstatechange', onChange);
-    setTimeout(finish, 9000);
+    peer.on('disconnected', () => {
+      setStatus('Se perdio la conexion con el servidor. La llamada puede cortarse si aun no habia empezado.', 'error');
+    });
   });
 }
 
-async function encodeSignalPayload(payload) {
-  const compact = {
-    a: 'lf',
-    v: 1,
-    t: payload.type === 'offer' ? 'o' : 'a',
-    n: payload.name,
-    d: [payload.description.type, payload.description.sdp],
-    s: payload.stun ? 1 : 0,
-    c: payload.createdAt,
-  };
-  const bytes = new TextEncoder().encode(JSON.stringify(compact));
-  const compressed = await compressBytes(bytes);
-  return `${compressed.wasCompressed ? 'Z' : 'J'}${base64UrlEncode(compressed.bytes)}`;
-}
+async function createRoomPeer() {
+  let lastError = null;
 
-function base64UrlEncode(bytes) {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.slice(i, i + 0x8000));
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const code = generateRoomCode();
 
-function base64UrlDecode(text) {
-  const base64 = text.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(text.length / 4) * 4, '=');
-  return Uint8Array.from(atob(base64), char => char.charCodeAt(0));
-}
-
-async function compressBytes(bytes) {
-  if (!window.CompressionStream) return { bytes, wasCompressed: false };
-
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
-  const buffer = await new Response(stream).arrayBuffer();
-  return { bytes: new Uint8Array(buffer), wasCompressed: true };
-}
-
-async function decompressBytes(bytes) {
-  if (!window.DecompressionStream) {
-    throw new Error('Este navegador no puede descomprimir codigos compactos. Prueba con Chrome, Edge o Firefox actualizado.');
-  }
-
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  const buffer = await new Response(stream).arrayBuffer();
-  return new Uint8Array(buffer);
-}
-
-async function decodeSignalPayload(text) {
-  const clean = String(text || '').trim();
-  if (!clean) throw new Error('Pega primero un codigo de conexion.');
-
-  try {
-    let json = '';
-    if (clean[0] === 'Z') {
-      json = new TextDecoder().decode(await decompressBytes(base64UrlDecode(clean.slice(1))));
-    } else if (clean[0] === 'J') {
-      json = new TextDecoder().decode(base64UrlDecode(clean.slice(1)));
-    } else {
-      json = new TextDecoder().decode(
-        Uint8Array.from(atob(clean), char => char.charCodeAt(0))
-      );
+    try {
+      await createSignalingPeer(code);
+      return code;
+    } catch (err) {
+      lastError = err;
+      if (err?.type !== 'unavailable-id') throw err;
     }
-
-    const payload = JSON.parse(json);
-    const normalized = payload.a === 'lf'
-      ? {
-          app: 'la-feria',
-          version: payload.v,
-          type: payload.t === 'o' ? 'offer' : 'answer',
-          name: payload.n,
-          description: { type: payload.d?.[0], sdp: payload.d?.[1] },
-          stun: Boolean(payload.s),
-          createdAt: payload.c,
-        }
-      : payload;
-
-    if (normalized.app !== 'la-feria' || normalized.version !== 1 || !normalized.description?.sdp) {
-      throw new Error('Formato no reconocido.');
-    }
-
-    return normalized;
-  } catch (err) {
-    throw new Error('El codigo no parece valido. Copia y pega el texto completo.');
   }
+
+  throw lastError || new Error('No se pudo crear un codigo libre.');
+}
+
+function attachRemoteStream(stream) {
+  state.remoteStream = stream;
+  $('remoteVideo').srcObject = stream;
+  $('waitingPanel').classList.add('hidden');
+  setStatus('Conexion establecida.', 'success');
+}
+
+function bindCallEvents(call) {
+  state.currentCall = call;
+
+  call.on('stream', stream => {
+    attachRemoteStream(stream);
+  });
+
+  call.on('close', () => {
+    setStatus('La llamada se ha cerrado.', 'info');
+  });
+
+  call.on('error', err => {
+    setStatus(peerErrorMessage(err), 'error');
+  });
+}
+
+function answerIncomingCall(call) {
+  if (!state.localStream) {
+    call.close();
+    return;
+  }
+
+  if (state.currentCall) {
+    call.close();
+    return;
+  }
+
+  setStatus('Otra persona entro. Activando llamada...', 'info');
+  bindCallEvents(call);
+  call.answer(state.localStream, { metadata: { name: state.profile } });
+}
+
+function closePeer() {
+  if (state.currentCall) {
+    state.currentCall.close();
+  }
+
+  if (state.peer) {
+    state.peer.destroy();
+  }
+
+  state.currentCall = null;
+  state.peer = null;
 }
 
 function prepareCallScreen(role) {
@@ -286,88 +284,50 @@ async function createManualOffer() {
   if (!requireProfile('createMsg')) return;
 
   prepareCallScreen('creator');
-  setStatus('Creando oferta WebRTC. Espera a que termine la recopilacion ICE...', 'info');
+  setStatus('Preparando camara, microfono y codigo corto...', 'info');
   $('manualOfferCode').value = '';
-  $('manualFinalAnswerCode').value = '';
 
   try {
     await ensureLocalMedia();
-    const pc = createPeerConnection();
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await waitForIceGatheringComplete(pc);
-
-    $('manualOfferCode').value = await encodeSignalPayload({
-      app: 'la-feria',
-      version: 1,
-      type: 'offer',
-      name: state.profile,
-      description: pc.localDescription,
-      stun: $('usePublicStun')?.checked || false,
-      createdAt: Date.now(),
-    });
-
-    setStatus('Paso 1 listo: copia este codigo y mandaselo a la otra persona.', 'success');
+    const code = await createRoomPeer();
+    state.peer.on('call', answerIncomingCall);
+    $('manualOfferCode').value = code;
+    setStatus('Codigo listo: copia estos 12 digitos y mandaselos a la otra persona.', 'success');
   } catch (err) {
-    setStatus(mediaErrorMessage(err), 'error');
+    setStatus(setupErrorMessage(err), 'error');
   }
 }
 
 async function generateManualAnswer() {
   if (!requireProfile('joinMsg')) return;
 
-  let payload;
+  let code;
   try {
-    payload = await decodeSignalPayload($('manualReceivedCode').value);
-    if (payload.type !== 'offer') throw new Error('El codigo recibido no es una oferta.');
+    code = validateRoomCode($('manualReceivedCode').value);
   } catch (err) {
     showMsg('joinMsg', 'error', err.message);
     return;
   }
 
   prepareCallScreen('guest');
-  setStatus('Generando respuesta WebRTC. Espera a que termine la recopilacion ICE...', 'info');
-  $('manualAnswerCode').value = '';
+  setStatus('Entrando con el codigo corto...', 'info');
 
   try {
     await ensureLocalMedia();
-    const pc = createPeerConnection();
-    await pc.setRemoteDescription(new RTCSessionDescription(payload.description));
+    await createSignalingPeer();
 
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await waitForIceGatheringComplete(pc);
-
-    $('manualAnswerCode').value = await encodeSignalPayload({
-      app: 'la-feria',
-      version: 1,
-      type: 'answer',
-      name: state.profile,
-      description: pc.localDescription,
-      stun: $('usePublicStun')?.checked || false,
-      createdAt: Date.now(),
+    const call = state.peer.call(code, state.localStream, {
+      metadata: { name: state.profile },
     });
 
-    setStatus('Respuesta lista: copia este codigo y devuelveselo a quien creo la llamada.', 'success');
+    if (!call) {
+      throw new Error('No se pudo iniciar la llamada.');
+    }
+
+    bindCallEvents(call);
+    setStatus('Llamando al creador. Espera unos segundos...', 'info');
   } catch (err) {
-    setStatus(mediaErrorMessage(err), 'error');
-  }
-}
-
-async function applyManualAnswer() {
-  if (!state.peer || state.role !== 'creator') {
-    setStatus('Primero crea una llamada y copia la oferta.', 'error');
-    return;
-  }
-
-  try {
-    const payload = await decodeSignalPayload($('manualFinalAnswerCode').value);
-    if (payload.type !== 'answer') throw new Error('El codigo pegado no es una respuesta.');
-
-    await state.peer.setRemoteDescription(new RTCSessionDescription(payload.description));
-    setStatus('Respuesta aplicada. Intentando conectar la llamada...', 'info');
-  } catch (err) {
-    setStatus(err.message, 'error');
+    setStatus(setupErrorMessage(err), 'error');
   }
 }
 
@@ -430,6 +390,11 @@ function closeSettingsPanel() {
   $('settingsPanel').classList.add('hidden');
 }
 
+function clearField(id) {
+  const el = $(id);
+  if (el) el.value = '';
+}
+
 function leaveRoom() {
   closePeer();
   state.localStream?.getTracks().forEach(track => track.stop());
@@ -439,10 +404,8 @@ function leaveRoom() {
 
   $('localVideo').srcObject = null;
   $('remoteVideo').srcObject = null;
-  $('manualOfferCode').value = '';
-  $('manualReceivedCode').value = '';
-  $('manualAnswerCode').value = '';
-  $('manualFinalAnswerCode').value = '';
+  clearField('manualOfferCode');
+  clearField('manualReceivedCode');
   $('camOffMsg').classList.add('hidden');
   closeSettingsPanel();
   showScreen('menuScreen');

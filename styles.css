@@ -43,7 +43,6 @@ body::before {
 
 button,
 input,
-select,
 textarea {
   font: inherit;
 }
@@ -264,7 +263,6 @@ label {
 }
 
 input,
-select,
 textarea {
   width: 100%;
   padding: 12px 14px;
@@ -279,14 +277,6 @@ input {
   min-height: 48px;
 }
 
-select {
-  min-height: 48px;
-}
-
-select option {
-  color: #111;
-}
-
 textarea {
   min-height: 140px;
   resize: vertical;
@@ -294,7 +284,6 @@ textarea {
 }
 
 input:focus,
-select:focus,
 textarea:focus {
   border-color: #fff;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18);
@@ -398,42 +387,6 @@ textarea:focus {
   text-transform: uppercase;
 }
 
-.rooms-list {
-  display: grid;
-  gap: 14px;
-  margin-top: 18px;
-}
-
-.room-card {
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(255, 243, 207, 0.26);
-  border-radius: var(--radius);
-  background: rgba(0, 0, 0, 0.22);
-}
-
-.room-card strong,
-.room-card span {
-  display: block;
-}
-
-.room-card strong {
-  color: var(--cream);
-  font-size: 1.08rem;
-}
-
-.room-card span {
-  margin-top: 4px;
-  color: var(--muted);
-}
-
-.room-card-actions {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px;
-}
-
 #roomScreen {
   padding: 0;
   background: #05070d;
@@ -501,21 +454,6 @@ textarea:focus {
   font-weight: 900;
 }
 
-.remote-audio-btn {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  z-index: 5;
-  min-height: 42px;
-  padding: 10px 14px;
-  border: 1px solid rgba(255, 243, 207, 0.72);
-  border-radius: var(--radius);
-  color: #101014;
-  background: var(--yellow);
-  font-weight: 900;
-  cursor: pointer;
-}
-
 .settings-fab {
   position: absolute;
   top: 18px;
@@ -565,7 +503,7 @@ textarea:focus {
 }
 
 .settings-header h2,
-.room-panel h2 {
+.manual-panel h2 {
   font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
   letter-spacing: 0;
 }
@@ -619,43 +557,13 @@ textarea:focus {
   font-size: 0.82rem;
 }
 
-.room-panel {
+.manual-panel {
   grid-column: 1 / -1;
   display: grid;
   gap: 16px;
   padding: 18px;
   border-top: 2px solid rgba(255, 255, 255, 0.14);
   background: linear-gradient(180deg, rgba(12, 20, 45, 0.96), rgba(39, 15, 39, 0.96));
-}
-
-.room-panel-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 14px;
-}
-
-.signal-panel {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid rgba(255, 243, 207, 0.26);
-  border-radius: var(--radius);
-  background: rgba(0, 0, 0, 0.22);
-}
-
-.signal-panel strong {
-  color: var(--yellow);
-  font-size: 1.02rem;
-  text-transform: uppercase;
-}
-
-.signal-panel p {
-  color: var(--muted);
-  line-height: 1.45;
-}
-
-.signal-panel textarea {
-  min-height: 104px;
 }
 
 .call-status {
@@ -679,19 +587,22 @@ textarea:focus {
   border: 1px solid rgba(255, 255, 255, 0.22);
 }
 
-.room-code-kicker {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 900;
-  text-transform: uppercase;
+.manual-role-panel {
+  display: grid;
+  gap: 14px;
 }
 
-.room-name-title {
-  display: block;
+.manual-step {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed rgba(255, 243, 207, 0.3);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.manual-step strong {
   color: var(--yellow);
-  font-size: clamp(1.4rem, 4vw, 2.4rem);
 }
 
 @media (max-width: 760px) {
@@ -715,10 +626,6 @@ textarea:focus {
 
   .btn {
     width: 100%;
-  }
-
-  .room-card-actions {
-    grid-template-columns: 1fr;
   }
 
   .call-stage {

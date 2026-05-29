@@ -295,6 +295,14 @@ textarea:focus {
   word-break: break-all;
 }
 
+.room-code-field {
+  min-height: 56px;
+  font-size: 1.35rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-align: center;
+}
+
 .btn-row {
   display: flex;
   justify-content: flex-end;

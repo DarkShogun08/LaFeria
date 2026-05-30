@@ -942,6 +942,33 @@ textarea:focus {
   font-size: clamp(1rem, 1.9vw, 1.8rem);
 }
 
+.quiz-question-line.has-fair-image {
+  justify-content: flex-start;
+  padding-left: 104px;
+  padding-right: 42px;
+  text-align: left;
+}
+
+.quiz-question-text {
+  min-width: 0;
+}
+
+.quiz-fair-question-image {
+  position: absolute;
+  left: 34px;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  border: 3px solid rgba(255, 243, 207, 0.92);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 0 0 3px rgba(182, 28, 54, 0.7),
+    0 10px 22px rgba(0, 0, 0, 0.35);
+  object-fit: cover;
+  transform: translateY(-50%);
+}
+
 .quiz-question-line.is-visible,
 .quiz-answer-line.is-visible {
   opacity: 1;
@@ -1096,10 +1123,30 @@ textarea:focus {
   line-height: 1;
   text-align: center;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
   text-transform: uppercase;
   transform: translate(-50%, -42%) scale(0.9);
   transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.quiz-final-title {
+  display: block;
+}
+
+.quiz-final-dismiss {
+  display: block;
+  min-width: 160px;
+  min-height: 46px;
+  margin: 24px auto 0;
+  border: 2px solid rgba(255, 243, 207, 0.82);
+  border-radius: 999px;
+  color: #111;
+  background: linear-gradient(135deg, var(--cream), var(--gold));
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  font: 900 1rem/1 system-ui, sans-serif;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .quiz-final-overlay.is-visible {
@@ -1120,6 +1167,23 @@ textarea:focus {
   text-shadow:
     0 5px 0 rgba(0, 0, 0, 0.75),
     0 0 28px rgba(255, 37, 87, 0.55);
+}
+
+.crying-emoji-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.crying-emoji-layer span {
+  position: absolute;
+  top: -80px;
+  font-size: clamp(2rem, 5vw, 4.4rem);
+  opacity: 0;
+  filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.45));
+  animation: cryingEmojiFall 4.6s ease-in-out infinite;
 }
 
 .fireworks-layer {
@@ -1180,6 +1244,26 @@ textarea:focus {
   100% {
     opacity: 0;
     transform: translate3d(var(--drift), 108vh, 0) rotate(720deg);
+  }
+}
+
+@keyframes cryingEmojiFall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -20px, 0) rotate(-8deg) scale(0.78);
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  78% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--emoji-drift), 112vh, 0) rotate(16deg) scale(1.04);
   }
 }
 
@@ -1316,6 +1400,19 @@ textarea:focus {
 
 .lifeline-btn:hover {
   transform: translateY(-1px);
+}
+
+.creator-lifelines.viewer-lifelines {
+  pointer-events: none;
+}
+
+.creator-lifelines.viewer-lifelines .lifeline-btn {
+  cursor: default;
+  opacity: 0.82;
+}
+
+.creator-lifelines.viewer-lifelines .lifeline-btn:hover {
+  transform: none;
 }
 
 .lifeline-btn.is-used {
@@ -1671,7 +1768,7 @@ textarea:focus {
 }
 
 .roulette-wheel.is-spinning {
-  animation: rouletteSpin 5.6s cubic-bezier(0.08, 0.82, 0.13, 1) forwards;
+  animation: rouletteSpin 5s cubic-bezier(0.08, 0.82, 0.13, 1) forwards;
 }
 
 .roulette-copy {
@@ -1901,7 +1998,7 @@ textarea:focus {
   width: min(1060px, calc(100vw - 32px));
   max-height: min(86vh, 880px);
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto auto;
   gap: 14px;
   overflow: hidden;
   padding: 22px;
@@ -1980,6 +2077,25 @@ textarea:focus {
   text-transform: uppercase;
 }
 
+.creator-check-row,
+.creator-delay-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.creator-check-row input,
+.creator-delay-toggle input {
+  width: 20px;
+  height: 20px;
+  accent-color: #fff;
+}
+
 .creator-question-card textarea,
 .creator-question-card input,
 .creator-question-card select {
@@ -1994,6 +2110,11 @@ textarea:focus {
 .creator-question-card textarea {
   min-height: 86px;
   resize: vertical;
+}
+
+.creator-question-card .creator-check-row input {
+  width: 20px;
+  height: 20px;
 }
 
 .creator-answer-grid {
@@ -2019,6 +2140,10 @@ textarea:focus {
   align-items: center;
   padding-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.creator-delay-toggle {
+  padding-top: 10px;
 }
 
 .creator-questions-footer span {
@@ -2132,6 +2257,19 @@ textarea:focus {
   .quiz-question-line {
     min-height: 36px;
     width: 98%;
+  }
+
+  .quiz-question-line.has-fair-image {
+    padding-left: 66px;
+    padding-right: 20px;
+  }
+
+  .quiz-fair-question-image {
+    left: 20px;
+    top: 50%;
+    width: 36px;
+    height: 36px;
+    border-width: 2px;
   }
 
   .quiz-answer-grid {

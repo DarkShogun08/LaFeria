@@ -1,24 +1,29 @@
 // La Feria - version estatica para GitHub Pages.
-// Usa WebRTC con PeerJS para que el codigo compartido sea corto.
+// Usa WebRTC con PeerJS para llamadas con codigo corto.
 
 const ROOM_CODE_LENGTH = 12;
 const CREATOR_QUESTION_COUNT = 15;
 const CREATOR_QUESTION_OPTIONS = ['A', 'B', 'C', 'D'];
 const CREATOR_QUESTIONS_FALLBACK_KEY = 'laFeria_creator_questions';
+const FAIR_QUESTION_IMAGE_SRC = 'images/WhatsApp%20Image%202026-05-27%20at%2010.57.43%20(1).jpeg';
 const ROULETTE_SEGMENTS = [0, 1, 2, 1, 3, 1, 2, 1, 0, 1, 2, 1, 1, 2, 3, 1];
 const ROULETTE_SEGMENT_DEGREES = 360 / ROULETTE_SEGMENTS.length;
-const ROULETTE_SPIN_MS = 5600;
+const ROULETTE_SPIN_MS = 5000;
 const QUIZ_REVEAL_DELAY_MS = 5000;
 const SOUNDS = {
   applauseSound: 'sounds/applause-new.mp3',
   failSound: 'sounds/fail-new.mp3',
+  timerSound: 'sounds/Temporizador.mp3',
+  waitSound: 'sounds/Espera.mp3',
+  rouletteSound: 'sounds/Ruleta.m4a',
 };
 const QUIZ_SOUND_VOLUME = 0.35;
+const TIMER_SOUND_VOLUME = 0.12;
+const WAIT_SOUND_VOLUME = 0.2;
+const ROULETTE_SOUND_VOLUME = 0.45;
 
 const RTC_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-  ],
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 };
 
 const state = {
@@ -40,10 +45,8 @@ const state = {
   audioFallbackContext: null,
   audioFallbackOscillator: null,
   videoFallbackCanvas: null,
-  quizAudioContext: null,
-  quizAudioBuffers: {},
-  quizAudioUnlocked: false,
   quizActiveSounds: [],
+  phoneTimerAudio: null,
   micTestStream: null,
   micTestAudioContext: null,
   micTestSource: null,
@@ -60,9 +63,10 @@ const state = {
   quizEliminatedAnswers: Array.from({ length: CREATOR_QUESTION_COUNT }, () => []),
   quizPendingSelection: null,
   quizRevealTimeout: null,
-  quizSuspenseInterval: null,
   quizFinalShown: false,
-  phoneTimerRemaining: 50,
+  quizFinalType: '',
+  answerDelayEnabled: true,
+  phoneTimerRemaining: 30,
   phoneTimerInterval: null,
   phoneTimerVisible: false,
   phoneLifelineUsed: false,
@@ -82,10 +86,7 @@ function $(id) {
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(screen => screen.classList.add('hidden'));
   $(id)?.classList.remove('hidden');
-
-  if (id === 'profileScreen') {
-    $('profileInput').value = state.profile;
-  }
+  if (id === 'profileScreen') $('profileInput').value = state.profile;
 }
 
 function showMsg(id, type, text) {
@@ -119,6 +120,51 @@ function setLocalStorageItem(key, value) {
   }
 }
 
+function generateRoomCode() {
+  let code = '';
+  for (let index = 0; index < ROOM_CODE_LENGTH; index += 1) {
+    code += Math.floor(Math.random() * 10);
+  }
+  return code;
+}
+
+function validateRoomCode(value) {
+  const code = String(value || '').replace(/\D/g, '');
+  if (code.length !== ROOM_CODE_LENGTH) {
+    throw new Error(`El codigo debe tener ${ROOM_CODE_LENGTH} digitos.`);
+  }
+  return code;
+}
+
+function getRtcConfig() {
+  return $('usePublicStun')?.checked ? RTC_CONFIG : { iceServers: [] };
+}
+
+function updateProfileBadge() {
+  const name = state.profile || 'Sin nombre';
+  $('profileNameDisplay').textContent = name;
+  $('avatarDisplay').textContent = name[0]?.toUpperCase() || '?';
+}
+
+function saveProfile() {
+  const value = $('profileInput').value.trim();
+  if (!value) {
+    showMsg('profileMsg', 'error', 'El nombre no puede estar vacio.');
+    return;
+  }
+  state.profile = value;
+  setLocalStorageItem('la_feria_profile', value);
+  updateProfileBadge();
+  showMsg('profileMsg', 'success', 'Perfil guardado.');
+  setTimeout(() => showScreen('menuScreen'), 650);
+}
+
+function requireProfile(targetMsgId) {
+  if (state.profile) return true;
+  showMsg(targetMsgId, 'error', 'Primero anade un nombre de perfil.');
+  return false;
+}
+
 function creatorQuestionsStorageKey() {
   return state.currentRoomCode
     ? `${CREATOR_QUESTIONS_FALLBACK_KEY}_${state.currentRoomCode}`
@@ -130,18 +176,19 @@ function emptyCreatorQuestion() {
     prompt: '',
     answers: { A: '', B: '', C: '', D: '' },
     correct: 'A',
+    fairQuestion: false,
   };
 }
 
 function normalizeCreatorQuestion(raw) {
   const question = emptyCreatorQuestion();
   if (!raw || typeof raw !== 'object') return question;
-
   question.prompt = String(raw.prompt || '');
   CREATOR_QUESTION_OPTIONS.forEach(option => {
     question.answers[option] = String(raw.answers?.[option] || '');
   });
   question.correct = CREATOR_QUESTION_OPTIONS.includes(raw.correct) ? raw.correct : 'A';
+  question.fairQuestion = Boolean(raw.fairQuestion);
   return question;
 }
 
@@ -152,122 +199,89 @@ function normalizeCreatorQuestions(raw) {
 
 function loadCreatorQuestions() {
   let saved = null;
-
   try {
     saved = JSON.parse(getLocalStorageItem(creatorQuestionsStorageKey()) || 'null');
   } catch (err) {
     console.warn('No se pudieron leer las preguntas guardadas.', err);
   }
-
   state.creatorQuestions = normalizeCreatorQuestions(saved);
   renderCreatorQuestions();
 }
 
 function saveCreatorQuestions(silent = false) {
   if (state.role !== 'creator') return;
-
-  try {
-    const saved = setLocalStorageItem(creatorQuestionsStorageKey(), JSON.stringify(state.creatorQuestions));
-    const savedLabel = $('creatorQuestionsSaved');
-    if (savedLabel) {
-      savedLabel.textContent = saved
-        ? (silent ? 'Guardado automaticamente.' : 'Preguntas guardadas.')
-        : 'No se pudieron guardar las preguntas.';
-    }
-  } catch (err) {
-    const savedLabel = $('creatorQuestionsSaved');
-    if (savedLabel) savedLabel.textContent = 'No se pudieron guardar las preguntas.';
-  }
+  const ok = setLocalStorageItem(creatorQuestionsStorageKey(), JSON.stringify(state.creatorQuestions));
+  const label = $('creatorQuestionsSaved');
+  if (label) label.textContent = ok
+    ? (silent ? 'Guardado automaticamente.' : 'Preguntas guardadas.')
+    : 'No se pudieron guardar las preguntas.';
 }
 
 function renderCreatorQuestions() {
   const list = $('creatorQuestionsList');
   if (!list) return;
-
   list.innerHTML = '';
+  state.creatorQuestions = normalizeCreatorQuestions(state.creatorQuestions);
+
   state.creatorQuestions.forEach((question, index) => {
-    const card = document.createElement('article');
-    card.className = 'creator-question-card';
-
-    const title = document.createElement('h3');
-    title.textContent = `Pregunta ${index + 1}`;
-    card.appendChild(title);
-
-    const promptLabel = document.createElement('label');
-    promptLabel.textContent = 'Texto de la pregunta';
-    promptLabel.setAttribute('for', `creatorQuestionPrompt${index}`);
-    card.appendChild(promptLabel);
-
-    const prompt = document.createElement('textarea');
-    prompt.id = `creatorQuestionPrompt${index}`;
-    prompt.rows = 3;
-    prompt.placeholder = 'Escribe aqui la pregunta...';
-    prompt.value = question.prompt;
-    prompt.dataset.questionIndex = String(index);
-    prompt.dataset.field = 'prompt';
-    card.appendChild(prompt);
-
-    const answers = document.createElement('div');
-    answers.className = 'creator-answer-grid';
-
-    CREATOR_QUESTION_OPTIONS.forEach(option => {
-      const answerLabel = document.createElement('label');
-      answerLabel.textContent = `Respuesta ${option}`;
-      answerLabel.setAttribute('for', `creatorQuestion${index}${option}`);
-
-      const answerInput = document.createElement('input');
-      answerInput.id = `creatorQuestion${index}${option}`;
-      answerInput.type = 'text';
-      answerInput.placeholder = `${option}: respuesta`;
-      answerInput.value = question.answers[option];
-      answerInput.dataset.questionIndex = String(index);
-      answerInput.dataset.field = 'answer';
-      answerInput.dataset.option = option;
-
-      const answerField = document.createElement('div');
-      answerField.className = 'creator-answer-field';
-      answerField.append(answerLabel, answerInput);
-      answers.appendChild(answerField);
-    });
-
-    card.appendChild(answers);
-
-    const correctRow = document.createElement('label');
-    correctRow.className = 'creator-correct-row';
-    correctRow.textContent = 'Respuesta correcta';
-
-    const correctSelect = document.createElement('select');
-    correctSelect.dataset.questionIndex = String(index);
-    correctSelect.dataset.field = 'correct';
-    CREATOR_QUESTION_OPTIONS.forEach(option => {
-      const correctOption = document.createElement('option');
-      correctOption.value = option;
-      correctOption.textContent = option;
-      correctSelect.appendChild(correctOption);
-    });
-    correctSelect.value = question.correct;
-    correctRow.appendChild(correctSelect);
-    card.appendChild(correctRow);
-
-    list.appendChild(card);
+    const item = document.createElement('article');
+    item.className = 'creator-question-card';
+    item.innerHTML = `
+      <h3>Pregunta ${index + 1}</h3>
+      <label class="creator-check-row">
+        <input data-index="${index}" data-field="fairQuestion" type="checkbox" ${question.fairQuestion ? 'checked' : ''}>
+        <span>Pregunta Feria</span>
+      </label>
+      <label>Texto de la pregunta
+        <textarea data-index="${index}" data-field="prompt" rows="2">${escapeHtml(question.prompt)}</textarea>
+      </label>
+      <div class="creator-answer-grid">
+        ${CREATOR_QUESTION_OPTIONS.map(option => `
+          <label>${option}
+            <input data-index="${index}" data-field="answer" data-option="${option}" value="${escapeAttr(question.answers[option])}">
+          </label>
+        `).join('')}
+      </div>
+      <label class="creator-correct-row">Correcta
+        <select data-index="${index}" data-field="correct">
+          ${CREATOR_QUESTION_OPTIONS.map(option => `<option value="${option}" ${question.correct === option ? 'selected' : ''}>${option}</option>`).join('')}
+        </select>
+      </label>
+    `;
+    list.appendChild(item);
   });
 }
 
-function updateCreatorQuestionFromInput(target) {
-  const index = Number(target.dataset.questionIndex);
-  const field = target.dataset.field;
-  if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[char]));
+}
 
-  const question = state.creatorQuestions[index] || emptyCreatorQuestion();
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/`/g, '&#96;');
+}
+
+function updateCreatorQuestionFromInput(target) {
+  if (!target?.dataset) return;
+  const index = Number(target.dataset.index);
+  if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
+  const field = target.dataset.field;
+  const question = normalizeCreatorQuestion(state.creatorQuestions[index]);
+
   if (field === 'prompt') {
     question.prompt = target.value;
   } else if (field === 'answer') {
     const option = target.dataset.option;
-    if (CREATOR_QUESTION_OPTIONS.includes(option)) {
-      question.answers[option] = target.value;
-    }
+    if (CREATOR_QUESTION_OPTIONS.includes(option)) question.answers[option] = target.value;
   } else if (field === 'correct') {
     question.correct = CREATOR_QUESTION_OPTIONS.includes(target.value) ? target.value : 'A';
+  } else if (field === 'fairQuestion') {
+    question.fairQuestion = Boolean(target.checked);
   }
 
   state.creatorQuestions[index] = question;
@@ -276,8 +290,8 @@ function updateCreatorQuestionFromInput(target) {
 
 function openCreatorQuestionsPanel() {
   if (state.role !== 'creator') return;
-
   loadCreatorQuestions();
+  syncAnswerDelayCheckbox();
   $('creatorQuestionsModal')?.classList.remove('hidden');
 }
 
@@ -285,9 +299,18 @@ function closeCreatorQuestionsPanel() {
   $('creatorQuestionsModal')?.classList.add('hidden');
 }
 
+function syncAnswerDelayCheckbox() {
+  const checkbox = $('answerDelayEnabled');
+  if (checkbox) checkbox.checked = state.answerDelayEnabled;
+}
+
+function toggleAnswerDelay() {
+  state.answerDelayEnabled = Boolean($('answerDelayEnabled')?.checked);
+}
+
 function resetQuizRound() {
   clearQuizSuspense();
-  document.querySelectorAll('.quiz-final-overlay, .fireworks-layer').forEach(item => item.remove());
+  document.querySelectorAll('.quiz-final-overlay, .fireworks-layer, .crying-emoji-layer').forEach(item => item.remove());
   state.currentQuestionIndex = -1;
   state.quizRevealStep = -1;
   state.quizSelectedAnswers = Array(CREATOR_QUESTION_COUNT).fill(null);
@@ -295,13 +318,16 @@ function resetQuizRound() {
   state.quizEliminatedAnswers = Array.from({ length: CREATOR_QUESTION_COUNT }, () => []);
   state.quizPendingSelection = null;
   state.quizFinalShown = false;
+  state.quizFinalType = '';
 }
 
 function resetQuizDisplay() {
   resetQuizRound();
   const questionLine = $('quizQuestionLine');
-  if (questionLine) questionLine.textContent = '';
-  if (questionLine) questionLine.classList.remove('is-visible');
+  if (questionLine) {
+    questionLine.textContent = '';
+    questionLine.classList.remove('is-visible');
+  }
   document.querySelectorAll('.quiz-answer-line').forEach(line => {
     line.textContent = '';
     line.disabled = true;
@@ -332,15 +358,26 @@ function displayQuizQuestion(index, question, revealStep = state.quizRevealStep)
   const safeQuestion = normalizeCreatorQuestion(question);
   const questionLine = $('quizQuestionLine');
   if (questionLine) {
-    questionLine.textContent = safeQuestion.prompt || `Pregunta ${index + 1}`;
+    questionLine.innerHTML = '';
+    if (safeQuestion.fairQuestion && revealStep >= 0) {
+      const image = document.createElement('img');
+      image.className = 'quiz-fair-question-image';
+      image.src = FAIR_QUESTION_IMAGE_SRC;
+      image.alt = '';
+      questionLine.appendChild(image);
+    }
+    const text = document.createElement('span');
+    text.className = 'quiz-question-text';
+    text.textContent = safeQuestion.prompt || `Pregunta ${index + 1}`;
+    questionLine.appendChild(text);
     questionLine.classList.toggle('is-visible', revealStep >= 0);
+    questionLine.classList.toggle('has-fair-image', safeQuestion.fairQuestion && revealStep >= 0);
   }
 
   CREATOR_QUESTION_OPTIONS.forEach(option => {
     const optionStep = CREATOR_QUESTION_OPTIONS.indexOf(option) + 1;
     const line = document.querySelector(`.quiz-answer-line[data-option="${option}"]`);
     if (!line) return;
-
     const selected = state.quizSelectedAnswers[index] === option;
     const result = state.quizResults[index];
     const visible = revealStep >= optionStep;
@@ -363,7 +400,7 @@ function sendDataMessage(message) {
     state.dataConnection.send(message);
     return true;
   } catch (err) {
-    console.warn('No se pudo enviar la pregunta.', err);
+    console.warn('No se pudo enviar por el canal de datos.', err);
     return false;
   }
 }
@@ -376,10 +413,7 @@ function setRemoteName(name) {
 }
 
 function sendProfileName() {
-  sendDataMessage({
-    type: 'profile-name',
-    name: state.profile || '',
-  });
+  sendDataMessage({ type: 'profile-name', name: state.profile || '' });
 }
 
 function handleDataMessage(data) {
@@ -393,13 +427,13 @@ function handleDataMessage(data) {
   if (data.type === 'quiz-pending-selection') {
     const index = Number(data.index);
     if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
-
     state.quizSelectedAnswers[index] = data.option;
     state.quizResults[index] = null;
     state.quizPendingSelection = { index, option: data.option };
     if (state.currentQuestionIndex === index) {
       displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
-      showQuizSuspense(QUIZ_REVEAL_DELAY_MS);
+      playQuizSound('waitSound', WAIT_SOUND_VOLUME);
+      showQuizSuspense();
     }
     return;
   }
@@ -407,7 +441,6 @@ function handleDataMessage(data) {
   if (data.type === 'quiz-selection') {
     const index = Number(data.index);
     if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
-
     clearQuizSuspense();
     state.quizPendingSelection = null;
     state.quizSelectedAnswers[index] = data.option;
@@ -416,7 +449,7 @@ function handleDataMessage(data) {
       state.quizResults = data.quizResults.slice(0, CREATOR_QUESTION_COUNT);
     }
     if (state.currentQuestionIndex === index) {
-      displayQuizQuestion(state.currentQuestionIndex, state.creatorQuestions[state.currentQuestionIndex], state.quizRevealStep);
+      displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
     } else {
       renderQuizProgress();
     }
@@ -425,17 +458,23 @@ function handleDataMessage(data) {
     return;
   }
 
+  if (data.type === 'quiz-final') {
+    showQuizFinal(data.text || (data.finalType === 'victory' ? '\u00A1Enhorabuena!' : '\u00A1Has perdido!'), data.finalType || 'defeat');
+    return;
+  }
+
+  if (data.type === 'quiz-final-clear') {
+    dismissQuizFinal(false);
+    return;
+  }
+
   if (data.type === 'quiz-eliminations') {
     const index = Number(data.index);
     if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
-
     state.quizEliminatedAnswers[index] = Array.isArray(data.eliminated)
       ? data.eliminated.filter(option => CREATOR_QUESTION_OPTIONS.includes(option))
       : [];
-
-    if (state.currentQuestionIndex === index) {
-      displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
-    }
+    if (state.currentQuestionIndex === index) displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
     return;
   }
 
@@ -450,28 +489,18 @@ function handleDataMessage(data) {
   }
 
   if (data.type !== 'quiz-question' && data.type !== 'quiz-state') return;
-
   const index = Number(data.index);
   if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
   state.currentQuestionIndex = index;
   state.quizRevealStep = Number.isInteger(data.revealStep) ? data.revealStep : 4;
   state.creatorQuestions = normalizeCreatorQuestions(state.creatorQuestions);
   state.creatorQuestions[index] = normalizeCreatorQuestion(data.question);
-  if (Array.isArray(data.quizSelectedAnswers)) {
-    state.quizSelectedAnswers = data.quizSelectedAnswers.slice(0, CREATOR_QUESTION_COUNT);
-  }
-  if (Array.isArray(data.quizResults)) {
-    state.quizResults = data.quizResults.slice(0, CREATOR_QUESTION_COUNT);
-  }
-  if (Array.isArray(data.quizEliminatedAnswers)) {
-    state.quizEliminatedAnswers = normalizeEliminatedAnswers(data.quizEliminatedAnswers);
-  }
+  if (Array.isArray(data.quizSelectedAnswers)) state.quizSelectedAnswers = data.quizSelectedAnswers.slice(0, CREATOR_QUESTION_COUNT);
+  if (Array.isArray(data.quizResults)) state.quizResults = data.quizResults.slice(0, CREATOR_QUESTION_COUNT);
+  if (Array.isArray(data.quizEliminatedAnswers)) state.quizEliminatedAnswers = normalizeEliminatedAnswers(data.quizEliminatedAnswers);
   if (data.quizPendingSelection?.index === index && !state.quizResults[index]) {
-    state.quizPendingSelection = {
-      index,
-      option: data.quizPendingSelection.option,
-    };
-    showQuizSuspense(QUIZ_REVEAL_DELAY_MS);
+    state.quizPendingSelection = { index, option: data.quizPendingSelection.option };
+    showQuizSuspense();
   } else {
     state.quizPendingSelection = null;
     clearQuizSuspense();
@@ -481,18 +510,12 @@ function handleDataMessage(data) {
 
 function bindDataConnection(connection) {
   if (!connection) return;
-
-  if (state.dataConnection && state.dataConnection !== connection) {
-    state.dataConnection.close?.();
-  }
-
+  if (state.dataConnection && state.dataConnection !== connection) state.dataConnection.close?.();
   state.dataConnection = connection;
   setRemoteName(connection.metadata?.name || state.remoteName);
   connection.on('open', () => {
     sendProfileName();
-    if (state.role === 'creator' && state.currentQuestionIndex >= 0) {
-      sendQuizState();
-    }
+    if (state.role === 'creator' && state.currentQuestionIndex >= 0) sendQuizState();
     if (state.role === 'creator') {
       sendPhoneLifelineState();
       sendRouletteLifelineState();
@@ -502,14 +525,11 @@ function bindDataConnection(connection) {
   connection.on('close', () => {
     if (state.dataConnection === connection) state.dataConnection = null;
   });
-  connection.on('error', err => {
-    console.warn('Error en el canal de preguntas.', err);
-  });
+  connection.on('error', err => console.warn('Error en canal de datos.', err));
 }
 
 function showCreatorQuestion(index) {
   if (state.role !== 'creator') return;
-
   loadCreatorQuestions();
   if (index < 0) {
     setStatus('Ya estas en la primera pregunta.', 'info');
@@ -519,18 +539,15 @@ function showCreatorQuestion(index) {
     setStatus('Ya has mostrado las 15 preguntas.', 'info');
     return;
   }
-
   state.currentQuestionIndex = index;
   state.quizRevealStep = 0;
-  const question = state.creatorQuestions[index];
-  displayQuizQuestion(index, question, state.quizRevealStep);
+  displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
   sendQuizState();
   setStatus(`Pregunta ${index + 1} mostrada.`, 'success');
 }
 
 function sendQuizState() {
   if (state.currentQuestionIndex < 0) return;
-
   sendDataMessage({
     type: 'quiz-state',
     index: state.currentQuestionIndex,
@@ -550,73 +567,17 @@ function normalizeEliminatedAnswers(value) {
   });
 }
 
-function getQuizAudioContext() {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) return null;
-
-  if (!state.quizAudioContext || state.quizAudioContext.state === 'closed') {
-    state.quizAudioContext = new AudioContextClass({ latencyHint: 'interactive' });
-  }
-
-  return state.quizAudioContext;
-}
-
-async function unlockQuizAudio() {
-  const context = getQuizAudioContext();
-  if (!context) return false;
-
-  try {
-    await context.resume?.();
-    if (!state.quizAudioUnlocked) {
-      const buffer = context.createBuffer(1, 1, context.sampleRate);
-      const source = context.createBufferSource();
-      const gain = context.createGain();
-      gain.gain.value = 0;
-      source.buffer = buffer;
-      source.connect(gain);
-      gain.connect(context.destination);
-      source.start(0);
-      state.quizAudioUnlocked = true;
-    }
-    preloadQuizSounds();
-    return context.state === 'running';
-  } catch (err) {
-    console.warn('No se pudo desbloquear el audio.', err);
-    return false;
-  }
-}
-
-async function preloadQuizSounds() {
-  const context = getQuizAudioContext();
-  if (!context) return;
-
-  await Promise.all(Object.entries(SOUNDS).map(async ([id, source]) => {
-    if (state.quizAudioBuffers[id]) return;
-
-    try {
-      const response = await fetch(source, { cache: 'reload' });
-      const arrayBuffer = await response.arrayBuffer();
-      state.quizAudioBuffers[id] = await context.decodeAudioData(arrayBuffer);
-    } catch (err) {
-      console.warn(`No se pudo precargar ${id}.`, err);
-    }
-  }));
-}
-
 function showPreviousCreatorQuestion() {
   if (state.role !== 'creator') return;
   closeSettingsPanel();
-
   if (isSelectionPending()) {
     setStatus('Espera a que se revele la respuesta.', 'info');
     return;
   }
-
   if (state.currentQuestionIndex < 0) {
     setStatus('Todavia no hay ninguna pregunta en pantalla.', 'info');
     return;
   }
-
   loadCreatorQuestions();
   if (state.quizRevealStep > 0) {
     state.quizRevealStep -= 1;
@@ -624,12 +585,10 @@ function showPreviousCreatorQuestion() {
     sendQuizState();
     return;
   }
-
   if (state.currentQuestionIndex === 0) {
     setStatus('Ya estas en la primera pregunta.', 'info');
     return;
   }
-
   state.currentQuestionIndex -= 1;
   state.quizRevealStep = 4;
   displayQuizQuestion(state.currentQuestionIndex, state.creatorQuestions[state.currentQuestionIndex], state.quizRevealStep);
@@ -639,96 +598,81 @@ function showPreviousCreatorQuestion() {
 function showNextCreatorQuestion() {
   if (state.role !== 'creator') return;
   closeSettingsPanel();
-
   if (isSelectionPending()) {
     setStatus('Espera a que se revele la respuesta.', 'info');
     return;
   }
-
   if (state.currentQuestionIndex < 0) {
     showCreatorQuestion(0);
     return;
   }
-
   loadCreatorQuestions();
   if (state.quizSelectedAnswers[state.currentQuestionIndex]) {
     showCreatorQuestion(state.currentQuestionIndex + 1);
     return;
   }
-
   if (state.quizRevealStep < 4) {
     state.quizRevealStep += 1;
     displayQuizQuestion(state.currentQuestionIndex, state.creatorQuestions[state.currentQuestionIndex], state.quizRevealStep);
     sendQuizState();
     return;
   }
-
   showCreatorQuestion(state.currentQuestionIndex + 1);
 }
 
-function playQuizSound(id) {
+function playQuizSound(id, volume = QUIZ_SOUND_VOLUME) {
   const source = SOUNDS[id] || $(id)?.getAttribute('src');
   if (!source) return;
-
-  let mediaStarted = false;
   try {
     const audio = new Audio(source);
     audio.preload = 'auto';
-    audio.volume = QUIZ_SOUND_VOLUME;
+    audio.volume = volume;
     state.quizActiveSounds.push(audio);
     audio.addEventListener('ended', () => {
       state.quizActiveSounds = state.quizActiveSounds.filter(item => item !== audio);
     }, { once: true });
-    audio.addEventListener('error', () => {
-      state.quizActiveSounds = state.quizActiveSounds.filter(item => item !== audio);
-    }, { once: true });
-
-    const playPromise = audio.play();
-    mediaStarted = true;
-    playPromise?.catch(err => {
-      console.warn('No se pudo reproducir el archivo de sonido.', err);
+    audio.play()?.catch(err => {
+      console.warn('No se pudo reproducir el sonido.', err);
       state.quizActiveSounds = state.quizActiveSounds.filter(item => item !== audio);
     });
   } catch (err) {
-    console.warn('No se pudo iniciar el sonido.', err);
+    console.warn('No se pudo preparar el sonido.', err);
   }
-
-  const context = getQuizAudioContext();
-  if (!mediaStarted && context && state.quizAudioBuffers[id]) {
-    playBufferedQuizSound(id);
-  }
-
-  unlockQuizAudio();
 }
 
-function playBufferedQuizSound(id) {
-  const context = getQuizAudioContext();
-  const buffer = state.quizAudioBuffers[id];
-  if (!context || !buffer) return false;
-
+function playPhoneTimerSound(offsetSeconds = 0) {
+  stopPhoneTimerSound();
   try {
-    const player = context.createBufferSource();
-    const gain = context.createGain();
-    gain.gain.value = QUIZ_SOUND_VOLUME;
-    player.buffer = buffer;
-    player.connect(gain);
-    gain.connect(context.destination);
-    player.start(0);
-    return true;
+    const audio = new Audio(SOUNDS.timerSound);
+    audio.preload = 'auto';
+    audio.volume = TIMER_SOUND_VOLUME;
+    audio.currentTime = Math.max(0, Math.min(29.5, offsetSeconds));
+    state.phoneTimerAudio = audio;
+    audio.addEventListener('ended', () => {
+      if (state.phoneTimerAudio === audio) state.phoneTimerAudio = null;
+    }, { once: true });
+    audio.play()?.catch(err => console.warn('No se pudo reproducir el temporizador.', err));
   } catch (err) {
-    console.warn('No se pudo reproducir el sonido precargado.', err);
-    return false;
+    console.warn('No se pudo preparar el temporizador.', err);
   }
+}
+
+function stopPhoneTimerSound() {
+  if (!state.phoneTimerAudio) return;
+  try {
+    state.phoneTimerAudio.pause();
+    state.phoneTimerAudio.currentTime = 0;
+  } catch (err) {
+    console.warn('No se pudo parar el temporizador.', err);
+  }
+  state.phoneTimerAudio = null;
 }
 
 function playQuizResultEffects(result) {
   if (result === 'correct') {
     playQuizSound('applauseSound');
     launchConfetti();
-    return;
-  }
-
-  if (result === 'wrong') {
+  } else if (result === 'wrong') {
     playQuizSound('failSound');
   }
 }
@@ -736,64 +680,72 @@ function playQuizResultEffects(result) {
 function updatePhoneTimerDisplay() {
   const timer = $('phoneTimer');
   if (timer) timer.textContent = String(state.phoneTimerRemaining).padStart(2, '0');
-
-  const panel = $('phoneLifelinePanel');
   const viewerOnly = state.role !== 'creator';
-  panel?.classList.toggle('hidden', !state.phoneTimerVisible);
-  panel?.classList.toggle('viewer-only', viewerOnly);
+  $('phoneLifelinePanel')?.classList.toggle('hidden', !state.phoneTimerVisible);
+  $('phoneLifelinePanel')?.classList.toggle('viewer-only', viewerOnly);
   $('phoneTimerLabel')?.classList.toggle('hidden', viewerOnly);
   $('phoneControls')?.classList.toggle('hidden', viewerOnly);
-
   const startButton = $('phoneStartBtn');
   if (startButton) startButton.disabled = Boolean(state.phoneTimerInterval);
-
   const pauseButton = $('phonePauseBtn');
   if (pauseButton) pauseButton.disabled = !state.phoneTimerInterval;
-
   const finishButton = $('phoneFinishBtn');
   if (finishButton) finishButton.disabled = state.phoneTimerRemaining <= 0;
-
   updateLifelineButtonState();
 }
 
 function confirmLifelineReuse(type) {
   const used = type === 'phone' ? state.phoneLifelineUsed : state.rouletteLifelineUsed;
   if (!used) return true;
-
   return window.confirm('Ya has usado este comodin, ¿Seguro que quieres volver a usarlo?');
 }
 
 function updateLifelineButtonState() {
-  $('phoneLifelineBtn')?.classList.toggle('is-used', state.phoneLifelineUsed);
-  $('rouletteLifelineBtn')?.classList.toggle('is-used', state.rouletteLifelineUsed);
+  const viewerOnly = state.role !== 'creator';
+  const bar = $('creatorLifelines');
+  const phoneButton = $('phoneLifelineBtn');
+  const rouletteButton = $('rouletteLifelineBtn');
+  bar?.classList.toggle('viewer-lifelines', viewerOnly);
+  phoneButton?.classList.toggle('is-used', state.phoneLifelineUsed);
+  rouletteButton?.classList.toggle('is-used', state.rouletteLifelineUsed);
+  [phoneButton, rouletteButton].forEach(button => {
+    if (!button) return;
+    button.setAttribute('aria-disabled', viewerOnly ? 'true' : 'false');
+    button.tabIndex = viewerOnly ? -1 : 0;
+  });
 }
 
 function sendPhoneLifelineState() {
   if (state.role !== 'creator') return;
-
   sendDataMessage({
     type: 'phone-lifeline-state',
     visible: state.phoneTimerVisible,
     remaining: state.phoneTimerRemaining,
     running: Boolean(state.phoneTimerInterval),
+    used: state.phoneLifelineUsed,
   });
 }
 
 function stopPhoneTimerInterval() {
-  if (state.phoneTimerInterval) {
-    clearInterval(state.phoneTimerInterval);
-  }
+  if (state.phoneTimerInterval && state.phoneTimerInterval !== true) clearInterval(state.phoneTimerInterval);
   state.phoneTimerInterval = null;
 }
 
 function applyPhoneLifelineState(data) {
   if (state.role === 'creator') return;
-
+  const wasRunning = Boolean(state.phoneTimerInterval);
   state.phoneTimerVisible = Boolean(data.visible);
   state.phoneTimerRemaining = Number.isFinite(Number(data.remaining))
-    ? Math.max(0, Math.min(50, Math.round(Number(data.remaining))))
-    : 50;
+    ? Math.max(0, Math.min(30, Math.round(Number(data.remaining))))
+    : 30;
+  if ('used' in data) state.phoneLifelineUsed = Boolean(data.used);
   stopPhoneTimerInterval();
+  if (data.running && state.phoneTimerVisible && state.phoneTimerRemaining > 0) {
+    state.phoneTimerInterval = true;
+    if (!wasRunning && !state.phoneTimerAudio) playPhoneTimerSound(30 - state.phoneTimerRemaining);
+  } else {
+    stopPhoneTimerSound();
+  }
   updatePhoneTimerDisplay();
 }
 
@@ -807,7 +759,6 @@ function openPhoneLifeline() {
     setStatus('Quita la ruleta antes de poner el contador.', 'info');
     return;
   }
-
   state.phoneTimerVisible = true;
   updatePhoneTimerDisplay();
   sendPhoneLifelineState();
@@ -815,8 +766,8 @@ function openPhoneLifeline() {
 
 function closePhoneLifeline() {
   if (state.role !== 'creator') return;
-
   stopPhoneTimerInterval();
+  stopPhoneTimerSound();
   state.phoneTimerVisible = false;
   updatePhoneTimerDisplay();
   sendPhoneLifelineState();
@@ -829,30 +780,29 @@ function startPhoneLifeline() {
     return;
   }
   if (state.phoneLifelineUsed && state.phoneTimerRemaining <= 0 && !confirmLifelineReuse('phone')) return;
-  if (state.phoneTimerRemaining <= 0) state.phoneTimerRemaining = 50;
+  if (state.phoneTimerRemaining <= 0) state.phoneTimerRemaining = 30;
   state.phoneTimerVisible = true;
   state.phoneLifelineUsed = true;
-
+  playPhoneTimerSound(30 - state.phoneTimerRemaining);
   state.phoneTimerInterval = setInterval(() => {
     state.phoneTimerRemaining = Math.max(0, state.phoneTimerRemaining - 1);
     updatePhoneTimerDisplay();
     sendPhoneLifelineState();
-
     if (state.phoneTimerRemaining <= 0) {
       stopPhoneTimerInterval();
+      stopPhoneTimerSound();
       updatePhoneTimerDisplay();
       sendPhoneLifelineState();
     }
   }, 1000);
-
   updatePhoneTimerDisplay();
   sendPhoneLifelineState();
 }
 
 function pausePhoneLifeline() {
   if (state.role !== 'creator') return;
-
   stopPhoneTimerInterval();
+  stopPhoneTimerSound();
   state.phoneTimerVisible = true;
   updatePhoneTimerDisplay();
   sendPhoneLifelineState();
@@ -860,8 +810,8 @@ function pausePhoneLifeline() {
 
 function finishPhoneLifeline() {
   if (state.role !== 'creator') return;
-
   stopPhoneTimerInterval();
+  stopPhoneTimerSound();
   state.phoneTimerVisible = true;
   state.phoneTimerRemaining = 0;
   updatePhoneTimerDisplay();
@@ -870,30 +820,27 @@ function finishPhoneLifeline() {
 
 function resetPhoneLifeline() {
   stopPhoneTimerInterval();
-  state.phoneTimerRemaining = 50;
+  stopPhoneTimerSound();
+  state.phoneTimerRemaining = 30;
   state.phoneTimerVisible = false;
   updatePhoneTimerDisplay();
 }
 
 function stopRouletteTimeout() {
-  if (state.rouletteTimeout) {
-    clearTimeout(state.rouletteTimeout);
-  }
+  if (state.rouletteTimeout) clearTimeout(state.rouletteTimeout);
   state.rouletteTimeout = null;
 }
 
 function updateRouletteDisplay() {
-  const modal = $('rouletteLifelineModal');
   const viewerOnly = state.role !== 'creator';
-  modal?.classList.toggle('hidden', !state.rouletteVisible);
-  modal?.classList.toggle('viewer-only', viewerOnly);
+  $('rouletteLifelineModal')?.classList.toggle('hidden', !state.rouletteVisible);
+  $('rouletteLifelineModal')?.classList.toggle('viewer-only', viewerOnly);
   $('rouletteSpinBtn')?.classList.toggle('hidden', viewerOnly);
   updateLifelineButtonState();
 }
 
 function sendRouletteLifelineState(extra = {}) {
   if (state.role !== 'creator') return;
-
   sendDataMessage({
     type: 'roulette-lifeline-state',
     visible: state.rouletteVisible,
@@ -901,76 +848,69 @@ function sendRouletteLifelineState(extra = {}) {
     targetDegrees: state.rouletteTargetDegrees,
     result: state.rouletteResultValue,
     message: state.rouletteMessage,
+    used: state.rouletteLifelineUsed,
     ...extra,
   });
 }
 
 function finishRouletteSpinVisual(targetDegrees, result) {
   const wheel = $('rouletteWheel');
-  const resultLabel = $('rouletteResult');
   state.rouletteSpinning = false;
   state.rouletteTimeout = null;
   wheel?.classList.remove('is-spinning');
   wheel?.style.setProperty('transform', `rotate(${targetDegrees}deg)`);
-  if (resultLabel) resultLabel.textContent = String(result);
+  const label = $('rouletteResult');
+  if (label) label.textContent = String(result);
 }
 
 function applyRouletteSpin(targetDegrees, result, message, scheduleCompletion = true) {
   const wheel = $('rouletteWheel');
-  const resultLabel = $('rouletteResult');
-
   stopRouletteTimeout();
+  playQuizSound('rouletteSound', ROULETTE_SOUND_VOLUME);
   state.rouletteSpinning = true;
   state.rouletteVisible = true;
   state.rouletteTargetDegrees = targetDegrees;
   state.rouletteResultValue = result;
   state.rouletteMessage = message || 'La ruleta esta girando...';
   updateRouletteDisplay();
-
   wheel?.classList.remove('is-spinning');
   if (wheel) wheel.style.transform = 'rotate(0deg)';
   void wheel?.offsetWidth;
   wheel?.style.setProperty('--roulette-spin', `${targetDegrees}deg`);
   wheel?.classList.add('is-spinning');
-  if (resultLabel) resultLabel.textContent = '?';
-
+  const label = $('rouletteResult');
+  if (label) label.textContent = '?';
   const copy = $('rouletteCopy');
   if (copy) copy.textContent = state.rouletteMessage;
-
   if (scheduleCompletion) {
-    state.rouletteTimeout = setTimeout(() => {
-      finishRouletteSpinVisual(targetDegrees, result);
-    }, ROULETTE_SPIN_MS);
+    state.rouletteTimeout = setTimeout(() => finishRouletteSpinVisual(targetDegrees, result), ROULETTE_SPIN_MS);
   }
 }
 
 function applyRouletteLifelineState(data) {
   if (state.role === 'creator') return;
-
   state.rouletteVisible = Boolean(data.visible);
+  if ('used' in data) state.rouletteLifelineUsed = Boolean(data.used);
   updateRouletteDisplay();
-
   if (!state.rouletteVisible) {
     stopRouletteTimeout();
     state.rouletteSpinning = false;
     $('rouletteWheel')?.classList.remove('is-spinning');
     return;
   }
-
-  const resultLabel = $('rouletteResult');
-  if (Number.isFinite(Number(data.result)) && !data.spinning && resultLabel) {
-    resultLabel.textContent = String(data.result);
+  const hasResult = data.result !== null && data.result !== undefined && data.result !== '';
+  const label = $('rouletteResult');
+  if (hasResult && Number.isFinite(Number(data.result)) && !data.spinning && label) {
+    label.textContent = String(data.result);
     if (Number.isFinite(Number(data.targetDegrees))) {
       $('rouletteWheel')?.style.setProperty('transform', `rotate(${Number(data.targetDegrees)}deg)`);
     }
-  } else if (resultLabel && !data.spinning) {
-    resultLabel.textContent = '?';
+  } else if (label && !data.spinning) {
+    label.textContent = '?';
   }
-
   const copy = $('rouletteCopy');
   if (copy && data.message) copy.textContent = data.message;
-
-  if (data.spinning && Number.isFinite(Number(data.targetDegrees))) {
+  if (data.spinning && hasResult && Number.isFinite(Number(data.targetDegrees))) {
     applyRouletteSpin(Number(data.targetDegrees), Number(data.result), data.message);
   }
 }
@@ -981,31 +921,26 @@ function openRouletteLifeline() {
     setStatus('Quita el contador antes de poner la ruleta.', 'info');
     return;
   }
-
   const modal = $('rouletteLifelineModal');
   if (modal && !modal.classList.contains('hidden')) {
     closeRouletteLifeline();
     return;
   }
-
   state.rouletteVisible = true;
-  updateRouletteDisplay();
-  const result = $('rouletteResult');
-  if (result) result.textContent = '?';
-  const copy = $('rouletteCopy');
-  if (copy) copy.textContent = 'Gira para eliminar respuestas incorrectas visibles.';
   state.rouletteResultValue = null;
   state.rouletteTargetDegrees = 0;
   state.rouletteMessage = 'Gira para eliminar respuestas incorrectas visibles.';
-  sendRouletteLifelineState({
-    result: null,
-  });
+  updateRouletteDisplay();
+  const label = $('rouletteResult');
+  if (label) label.textContent = '?';
+  const copy = $('rouletteCopy');
+  if (copy) copy.textContent = state.rouletteMessage;
+  sendRouletteLifelineState({ result: null });
 }
 
 function closeRouletteLifeline(force = false) {
   if (state.role !== 'creator' && !force) return;
   if (state.rouletteSpinning && !force) return;
-
   stopRouletteTimeout();
   state.rouletteVisible = false;
   state.rouletteSpinning = false;
@@ -1024,8 +959,8 @@ function resetRouletteLifeline() {
   state.rouletteMessage = '';
   $('rouletteWheel')?.classList.remove('is-spinning');
   $('rouletteWheel')?.style.setProperty('transform', 'rotate(0deg)');
-  const result = $('rouletteResult');
-  if (result) result.textContent = '?';
+  const label = $('rouletteResult');
+  if (label) label.textContent = '?';
   const copy = $('rouletteCopy');
   if (copy) copy.textContent = 'Gira para eliminar respuestas incorrectas visibles.';
   const spinButton = $('rouletteSpinBtn');
@@ -1035,8 +970,8 @@ function resetRouletteLifeline() {
 
 function weightedRouletteResult() {
   const roll = Math.random();
-  if (roll < 0.08) return 0;
-  if (roll < 0.58) return 1;
+  if (roll < 0.1) return 0;
+  if (roll < 0.6) return 1;
   if (roll < 0.9) return 2;
   return 3;
 }
@@ -1045,7 +980,6 @@ function pickRouletteSegment(result) {
   const matchingSegments = ROULETTE_SEGMENTS
     .map((value, index) => value === result ? index : -1)
     .filter(index => index >= 0);
-
   return matchingSegments[Math.floor(Math.random() * matchingSegments.length)] ?? 0;
 }
 
@@ -1061,8 +995,6 @@ function spinRouletteLifeline() {
     if (copy) copy.textContent = 'Primero muestra una pregunta.';
     return;
   }
-
-  const spinButton = $('rouletteSpinBtn');
   const targetQuestionIndex = state.currentQuestionIndex;
   const result = weightedRouletteResult();
   const segmentIndex = pickRouletteSegment(result);
@@ -1070,28 +1002,17 @@ function spinRouletteLifeline() {
   const targetDegrees = (10 * 360) + ((360 - segmentAngle) % 360);
   state.rouletteLifelineUsed = true;
   state.rouletteVisible = true;
-
+  const spinButton = $('rouletteSpinBtn');
   if (spinButton) spinButton.disabled = true;
   applyRouletteSpin(targetDegrees, result, 'La ruleta esta girando...', false);
-  sendRouletteLifelineState({
-    spinning: true,
-    targetDegrees,
-    result,
-    message: 'La ruleta esta girando...',
-  });
-
+  sendRouletteLifelineState({ spinning: true, targetDegrees, result, message: 'La ruleta esta girando...' });
   state.rouletteTimeout = setTimeout(() => {
     finishRouletteSpinVisual(targetDegrees, result);
     if (spinButton) spinButton.disabled = false;
     const message = applyRouletteElimination(result, targetQuestionIndex);
     state.rouletteMessage = message;
     state.rouletteResultValue = result;
-    sendRouletteLifelineState({
-      spinning: false,
-      targetDegrees,
-      result,
-      message,
-    });
+    sendRouletteLifelineState({ spinning: false, targetDegrees, result, message });
   }, ROULETTE_SPIN_MS);
 }
 
@@ -1102,30 +1023,19 @@ function applyRouletteElimination(count, index = state.currentQuestionIndex) {
     .filter(option => option !== question.correct)
     .filter(option => state.quizRevealStep >= CREATOR_QUESTION_OPTIONS.indexOf(option) + 1)
     .filter(option => !alreadyEliminated.includes(option));
-
   const shuffled = candidates
     .map(option => ({ option, sort: Math.random() }))
     .sort((a, b) => a.sort - b.sort)
     .map(item => item.option);
   const eliminatedNow = shuffled.slice(0, Math.max(0, count));
   state.quizEliminatedAnswers[index] = [...alreadyEliminated, ...eliminatedNow];
-
-  if (state.currentQuestionIndex === index) {
-    displayQuizQuestion(index, question, state.quizRevealStep);
-  }
-  sendDataMessage({
-    type: 'quiz-eliminations',
-    index,
-    eliminated: state.quizEliminatedAnswers[index],
-  });
-
-  const copy = $('rouletteCopy');
+  if (state.currentQuestionIndex === index) displayQuizQuestion(index, question, state.quizRevealStep);
+  sendDataMessage({ type: 'quiz-eliminations', index, eliminated: state.quizEliminatedAnswers[index] });
   const message = count === 0
     ? 'Resultado 0: no se elimina ninguna respuesta.'
     : `Resultado ${count}: eliminadas ${eliminatedNow.length} respuesta(s) incorrecta(s).`;
-  if (copy) {
-    copy.textContent = message;
-  }
+  const copy = $('rouletteCopy');
+  if (copy) copy.textContent = message;
   return message;
 }
 
@@ -1137,24 +1047,21 @@ function selectQuizAnswer(option) {
   if (state.quizEliminatedAnswers[state.currentQuestionIndex]?.includes(option)) return;
   if (state.quizSelectedAnswers[state.currentQuestionIndex]) return;
   if (isSelectionPending()) return;
-
-  const question = normalizeCreatorQuestion(state.creatorQuestions[state.currentQuestionIndex]);
   const index = state.currentQuestionIndex;
+  const question = normalizeCreatorQuestion(state.creatorQuestions[index]);
   const result = question.correct === option ? 'correct' : 'wrong';
   state.quizSelectedAnswers[index] = option;
   state.quizResults[index] = null;
-  state.quizPendingSelection = { index, option };
   displayQuizQuestion(index, question, state.quizRevealStep);
-  showQuizSuspense(QUIZ_REVEAL_DELAY_MS);
-  sendDataMessage({
-    type: 'quiz-pending-selection',
-    index,
-    option,
-  });
-
-  state.quizRevealTimeout = setTimeout(() => {
+  if (!state.answerDelayEnabled) {
     revealQuizAnswer(index, option, result);
-  }, QUIZ_REVEAL_DELAY_MS);
+    return;
+  }
+  state.quizPendingSelection = { index, option };
+  playQuizSound('waitSound', WAIT_SOUND_VOLUME);
+  showQuizSuspense();
+  sendDataMessage({ type: 'quiz-pending-selection', index, option });
+  state.quizRevealTimeout = setTimeout(() => revealQuizAnswer(index, option, result), QUIZ_REVEAL_DELAY_MS);
 }
 
 function revealQuizAnswer(index, option, result) {
@@ -1162,80 +1069,85 @@ function revealQuizAnswer(index, option, result) {
   state.quizPendingSelection = null;
   state.quizSelectedAnswers[index] = option;
   state.quizResults[index] = result;
-
-  if (state.currentQuestionIndex === index) {
-    displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
-  } else {
-    renderQuizProgress();
-  }
-
+  if (state.currentQuestionIndex === index) displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
+  else renderQuizProgress();
   playQuizResultEffects(result);
-  sendDataMessage({
-    type: 'quiz-selection',
-    index,
-    option,
-    result,
-    quizResults: state.quizResults,
-  });
+  sendDataMessage({ type: 'quiz-selection', index, option, result, quizResults: state.quizResults });
   checkQuizFinal();
 }
 
 function clearQuizSuspense() {
-  if (state.quizRevealTimeout) {
-    clearTimeout(state.quizRevealTimeout);
-  }
-  if (state.quizSuspenseInterval) {
-    clearInterval(state.quizSuspenseInterval);
-  }
+  if (state.quizRevealTimeout) clearTimeout(state.quizRevealTimeout);
   state.quizRevealTimeout = null;
-  state.quizSuspenseInterval = null;
   document.querySelectorAll('.quiz-suspense-overlay').forEach(item => item.remove());
 }
 
-function showQuizSuspense(durationMs) {
+function showQuizSuspense() {
   clearQuizSuspense();
-
-  const overlay = document.createElement('div');
-  overlay.className = 'quiz-suspense-overlay';
-  overlay.innerHTML = '<span>Respuesta bloqueada</span><strong>5</strong>';
-  document.body.appendChild(overlay);
-
-  const counter = overlay.querySelector('strong');
-  const startedAt = Date.now();
-  state.quizSuspenseInterval = setInterval(() => {
-    const remaining = Math.max(0, Math.ceil((durationMs - (Date.now() - startedAt)) / 1000));
-    if (counter) counter.textContent = String(remaining);
-    if (remaining <= 0 && state.quizSuspenseInterval) {
-      clearInterval(state.quizSuspenseInterval);
-      state.quizSuspenseInterval = null;
-    }
-  }, 150);
 }
 
 function checkQuizFinal() {
   if (state.quizFinalShown) return;
-  if (!state.quizResults.every(Boolean)) return;
-
-  state.quizFinalShown = true;
-  const won = state.quizResults.every(result => result === 'correct');
-  if (won) {
-    showQuizFinal('\u00A1Enhorabuena!', 'victory');
-    launchConfetti({ count: 520, duration: 6200 });
-    launchFireworks();
+  if (state.quizResults.includes('wrong')) {
+    showQuizFinal('\u00A1Has perdido!', 'defeat');
     return;
   }
-
-  showQuizFinal('\u00A1Has perdido!', 'defeat');
+  if (!state.quizResults.every(Boolean)) return;
+  showQuizFinal('\u00A1Enhorabuena!', 'victory');
 }
 
 function showQuizFinal(text, type) {
-  document.querySelectorAll('.quiz-final-overlay').forEach(item => item.remove());
+  if (state.quizFinalShown && state.quizFinalType === type) return;
+  document.querySelectorAll('.quiz-final-overlay, .crying-emoji-layer').forEach(item => item.remove());
+  state.quizFinalShown = true;
+  state.quizFinalType = type;
   const overlay = document.createElement('div');
   overlay.className = `quiz-final-overlay ${type}`;
-  overlay.textContent = text;
+  const title = document.createElement('span');
+  title.className = 'quiz-final-title';
+  title.textContent = text;
+  overlay.appendChild(title);
+  if (state.role === 'creator') {
+    const button = document.createElement('button');
+    button.className = 'quiz-final-dismiss';
+    button.type = 'button';
+    button.textContent = 'Quitar';
+    button.addEventListener('click', () => dismissQuizFinal(true));
+    overlay.appendChild(button);
+  }
   document.body.appendChild(overlay);
   setTimeout(() => overlay.classList.add('is-visible'), 30);
-  setTimeout(() => overlay.remove(), type === 'victory' ? 7800 : 5200);
+  if (type === 'victory') {
+    launchConfetti({ count: 520, duration: 6200 });
+    launchFireworks();
+  } else {
+    launchCryingEmojis();
+  }
+  if (state.role === 'creator') {
+    sendDataMessage({ type: 'quiz-final', finalType: type, text });
+  }
+}
+
+function dismissQuizFinal(send = true) {
+  document.querySelectorAll('.quiz-final-overlay, .crying-emoji-layer, .fireworks-layer').forEach(item => item.remove());
+  state.quizFinalShown = false;
+  state.quizFinalType = '';
+  if (send && state.role === 'creator') sendDataMessage({ type: 'quiz-final-clear' });
+}
+
+function launchCryingEmojis() {
+  const layer = document.createElement('div');
+  layer.className = 'crying-emoji-layer';
+  document.body.appendChild(layer);
+  for (let index = 0; index < 18; index += 1) {
+    const emoji = document.createElement('span');
+    emoji.textContent = index % 3 === 0 ? '\u{1F62D}' : '\u{1F622}';
+    emoji.style.left = `${5 + Math.random() * 90}%`;
+    emoji.style.animationDelay = `${Math.random() * 1.8}s`;
+    emoji.style.animationDuration = `${3.8 + Math.random() * 2.2}s`;
+    emoji.style.setProperty('--emoji-drift', `${(Math.random() - 0.5) * 180}px`);
+    layer.appendChild(emoji);
+  }
 }
 
 function launchConfetti(options = {}) {
@@ -1244,7 +1156,6 @@ function launchConfetti(options = {}) {
   const layer = document.createElement('div');
   layer.className = 'confetti-layer';
   document.body.appendChild(layer);
-
   const colors = ['#42e37f', '#ffd43d', '#ff2557', '#26b7ff', '#fff3cf'];
   for (let index = 0; index < count; index += 1) {
     const piece = document.createElement('span');
@@ -1259,7 +1170,6 @@ function launchConfetti(options = {}) {
     piece.style.setProperty('--drift', `${(Math.random() - 0.5) * 360}px`);
     layer.appendChild(piece);
   }
-
   setTimeout(() => layer.remove(), duration);
 }
 
@@ -1267,7 +1177,6 @@ function launchFireworks() {
   const layer = document.createElement('div');
   layer.className = 'fireworks-layer';
   document.body.appendChild(layer);
-
   for (let burst = 0; burst < 12; burst += 1) {
     const firework = document.createElement('span');
     firework.className = 'firework-burst';
@@ -1277,379 +1186,261 @@ function launchFireworks() {
     firework.style.setProperty('--firework-color', ['#ffd43d', '#ff2557', '#42e37f', '#26b7ff'][burst % 4]);
     layer.appendChild(firework);
   }
-
   setTimeout(() => layer.remove(), 7200);
 }
 
-function updateProfileBadge() {
-  const name = state.profile || 'Sin nombre';
-  $('profileNameDisplay').textContent = name;
-  $('avatarDisplay').textContent = name[0]?.toUpperCase() || '?';
+async function createFallbackAudioTrack() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const destination = context.createMediaStreamDestination();
+    gain.gain.value = 0;
+    oscillator.connect(gain);
+    gain.connect(destination);
+    oscillator.start();
+    state.audioFallbackContext = context;
+    state.audioFallbackOscillator = oscillator;
+    const [track] = destination.stream.getAudioTracks();
+    if (track) track._laFeriaFallback = true;
+    return track || null;
+  } catch (err) {
+    return null;
+  }
 }
 
-function saveProfile() {
-  const value = $('profileInput').value.trim();
-  if (!value) {
-    showMsg('profileMsg', 'error', 'El nombre no puede estar vacio.');
-    return;
+function createFallbackVideoTrack() {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 360;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#101014';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff3cf';
+    ctx.font = 'bold 34px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Camara apagada', canvas.width / 2, canvas.height / 2);
+    const stream = canvas.captureStream(8);
+    state.videoFallbackCanvas = canvas;
+    const [track] = stream.getVideoTracks();
+    if (track) track._laFeriaFallback = true;
+    return track || null;
+  } catch (err) {
+    return null;
   }
-
-  state.profile = value;
-  setLocalStorageItem('la_feria_profile', value);
-  updateProfileBadge();
-  showMsg('profileMsg', 'success', 'Perfil guardado.');
-  setTimeout(() => showScreen('menuScreen'), 700);
-}
-
-function requireProfile(targetMsgId) {
-  if (state.profile) return true;
-  showMsg(targetMsgId, 'error', 'Primero anade un nombre de perfil.');
-  return false;
-}
-
-function getRtcConfig() {
-  return $('usePublicStun')?.checked ? RTC_CONFIG : { iceServers: [] };
-}
-
-function mediaErrorMessage(err) {
-  const name = err?.name || '';
-
-  if (!window.isSecureContext) {
-    return 'La camara y el microfono requieren HTTPS. GitHub Pages usa HTTPS; revisa que abras la URL https://.';
-  }
-
-  if (name === 'NotAllowedError' || name === 'SecurityError') {
-    return 'Permisos denegados. Activa camara y microfono en el navegador.';
-  }
-
-  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-    return 'No se encontro camara o microfono disponible.';
-  }
-
-  if (name === 'NotReadableError') {
-    return 'La camara o el microfono estan siendo usados por otra aplicacion.';
-  }
-
-  return err?.message || 'No se pudo acceder a camara/microfono. Revisa permisos y vuelve a intentarlo.';
-}
-
-function peerErrorMessage(err) {
-  const type = err?.type || '';
-
-  if (type === 'unavailable-id') {
-    return 'Ese codigo ya esta en uso. Prueba a crear otra llamada.';
-  }
-
-  if (type === 'peer-unavailable') {
-    return 'No se encontro ninguna llamada con ese codigo. Revisa los digitos y vuelve a intentarlo.';
-  }
-
-  if (type === 'network' || type === 'server-error' || type === 'socket-error') {
-    return 'No se pudo contactar con el servidor de conexion. Revisa internet y prueba otra vez.';
-  }
-
-  if (type === 'browser-incompatible' || type === 'webrtc') {
-    return 'Este navegador no soporta la llamada WebRTC correctamente.';
-  }
-
-  return err?.message || 'No se pudo preparar la conexion.';
-}
-
-function setupErrorMessage(err) {
-  return err?.type ? peerErrorMessage(err) : mediaErrorMessage(err);
-}
-
-function markFallbackTrack(track, cleanup) {
-  track.isLaFeriaFallback = true;
-  if (cleanup) track.laFeriaCleanup = cleanup;
-  return track;
 }
 
 function isFallbackTrack(track) {
-  return Boolean(track?.isLaFeriaFallback);
+  return Boolean(track?._laFeriaFallback);
+}
+
+async function getOutgoingTrack(kind, deviceId = '') {
+  if (deviceId === '__none__') return kind === 'audio'
+    ? await createFallbackAudioTrack()
+    : createFallbackVideoTrack();
+
+  try {
+    const constraints = kind === 'audio'
+      ? { audio: deviceId ? { deviceId: { exact: deviceId } } : true, video: false }
+      : { audio: false, video: deviceId ? { deviceId: { exact: deviceId } } : true };
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    return stream.getTracks().find(track => track.kind === kind) || null;
+  } catch (err) {
+    return kind === 'audio' ? await createFallbackAudioTrack() : createFallbackVideoTrack();
+  }
+}
+
+async function ensureLocalMedia() {
+  if (state.localStream?.getTracks().length) return state.localStream;
+  const stream = new MediaStream();
+  const audioTrack = await getOutgoingTrack('audio', state.selectedAudioDeviceId);
+  const videoTrack = await getOutgoingTrack('video', state.selectedVideoDeviceId);
+  if (audioTrack) stream.addTrack(audioTrack);
+  if (videoTrack) stream.addTrack(videoTrack);
+  state.localStream = stream;
+  $('localVideo').srcObject = stream;
+  $('camOffMsg').classList.toggle('hidden', Boolean(videoTrack && !isFallbackTrack(videoTrack)));
+  await refreshDeviceLists();
+  updateControls();
+  return stream;
+}
+
+async function refreshDeviceLists() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    fillDeviceSelect($('audioDeviceSelect'), devices.filter(device => device.kind === 'audioinput'), 'Sin microfono', state.selectedAudioDeviceId);
+    fillDeviceSelect($('videoDeviceSelect'), devices.filter(device => device.kind === 'videoinput'), 'Sin camara', state.selectedVideoDeviceId);
+  } catch (err) {
+    console.warn('No se pudieron listar dispositivos.', err);
+  }
+}
+
+function fillDeviceSelect(select, devices, noneLabel, selectedId) {
+  if (!select) return;
+  const current = selectedId || select.value;
+  select.innerHTML = '';
+  select.appendChild(new Option(noneLabel, '__none__'));
+  devices.forEach((device, index) => {
+    const label = device.label || `${noneLabel.replace('Sin ', '')} ${index + 1}`;
+    select.appendChild(new Option(label, device.deviceId));
+  });
+  if ([...select.options].some(option => option.value === current)) select.value = current;
+}
+
+async function replaceLocalTrack(kind, nextTrack) {
+  if (!state.localStream) state.localStream = new MediaStream();
+  state.localStream.getTracks()
+    .filter(track => track.kind === kind)
+    .forEach(track => {
+      state.localStream.removeTrack(track);
+      track.stop();
+    });
+  if (nextTrack) state.localStream.addTrack(nextTrack);
+  $('localVideo').srcObject = state.localStream;
+  const sender = state.currentCall?.peerConnection?.getSenders?.().find(item => item.track?.kind === kind);
+  if (sender) await sender.replaceTrack(nextTrack && !isFallbackTrack(nextTrack) ? nextTrack : null);
+}
+
+async function changeAudioDevice() {
+  const select = $('audioDeviceSelect');
+  if (!select) return;
+  stopMicTest();
+  state.selectedAudioDeviceId = select.value;
+  state.micEnabled = select.value !== '__none__';
+  const track = await getOutgoingTrack('audio', select.value);
+  await replaceLocalTrack('audio', track);
+  await refreshDeviceLists();
+  updateControls();
+}
+
+async function changeVideoDevice() {
+  const select = $('videoDeviceSelect');
+  if (!select) return;
+  state.selectedVideoDeviceId = select.value;
+  state.camEnabled = select.value !== '__none__';
+  const track = await getOutgoingTrack('video', select.value);
+  await replaceLocalTrack('video', track);
+  $('camOffMsg').classList.toggle('hidden', Boolean(track && !isFallbackTrack(track)));
+  await refreshDeviceLists();
+  updateControls();
 }
 
 function getLocalTrack(kind) {
   return state.localStream?.getTracks().find(track => track.kind === kind) || null;
 }
 
-function createSilentAudioTrack() {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) return null;
-
-  const audioContext = new AudioContextClass();
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  const destination = audioContext.createMediaStreamDestination();
-
-  gain.gain.value = 0;
-  oscillator.connect(gain);
-  gain.connect(destination);
-  oscillator.start();
-
-  state.audioFallbackContext = audioContext;
-  state.audioFallbackOscillator = oscillator;
-
-  const track = destination.stream.getAudioTracks()[0];
-  track.enabled = false;
-  return markFallbackTrack(track, () => {
-    try {
-      oscillator.stop();
-    } catch (err) {
-      // Puede estar ya detenido.
-    }
-    audioContext.close?.();
-  });
-}
-
-function createBlackVideoTrack() {
-  const canvas = document.createElement('canvas');
-  if (!canvas.captureStream) return null;
-
-  canvas.width = 640;
-  canvas.height = 360;
-
-  const context = canvas.getContext('2d');
-  context.fillStyle = '#060812';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-
-  state.videoFallbackCanvas = canvas;
-
-  const stream = canvas.captureStream(5);
-  const track = stream.getVideoTracks()[0];
-  track.enabled = false;
-  return markFallbackTrack(track);
-}
-
-function stopTrack(track) {
-  if (!track) return;
-  track.laFeriaCleanup?.();
-  track.stop();
-}
-
-function stopFallbackHelpers() {
-  try {
-    state.audioFallbackOscillator?.stop();
-  } catch (err) {
-    // Puede estar ya detenido.
+function toggleMic() {
+  const track = getLocalTrack('audio');
+  if (!track || isFallbackTrack(track)) {
+    state.micEnabled = false;
+    updateControls();
+    setStatus('No hay microfono activo. Elige uno en ajustes.', 'info');
+    return;
   }
-
-  state.audioFallbackContext?.close?.();
-  state.audioFallbackContext = null;
-  state.audioFallbackOscillator = null;
-  state.videoFallbackCanvas = null;
-}
-
-function deviceConstraint(kind, deviceId) {
-  if (deviceId && deviceId !== '__default__' && deviceId !== '__none__') {
-    return { deviceId: { exact: deviceId } };
-  }
-
-  if (kind === 'video') {
-    return { width: { ideal: 1280 }, height: { ideal: 720 } };
-  }
-
-  return true;
-}
-
-function micTestConstraint(deviceId) {
-  const constraint = {
-    echoCancellation: false,
-    noiseSuppression: false,
-    autoGainControl: false,
-  };
-
-  if (deviceId && deviceId !== '__default__' && deviceId !== '__none__') {
-    constraint.deviceId = { exact: deviceId };
-  }
-
-  return constraint;
-}
-
-async function getMicTestTrack(deviceId) {
-  if (!navigator.mediaDevices?.getUserMedia || deviceId === '__none__') return null;
-
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: micTestConstraint(deviceId),
-    video: false,
-  });
-  return stream.getAudioTracks()[0] || null;
-}
-
-async function getDeviceTrack(kind, deviceId) {
-  if (!navigator.mediaDevices?.getUserMedia || deviceId === '__none__') return null;
-
-  const constraints = {
-    audio: kind === 'audio' ? deviceConstraint(kind, deviceId) : false,
-    video: kind === 'video' ? deviceConstraint(kind, deviceId) : false,
-  };
-  const stream = await navigator.mediaDevices.getUserMedia(constraints);
-  return stream.getTracks()[0] || null;
-}
-
-async function getOutgoingTrack(kind, deviceId) {
-  try {
-    const track = await getDeviceTrack(kind, deviceId);
-    if (track) return track;
-  } catch (err) {
-    console.warn(`No se pudo abrir ${kind}. Se usara pista vacia.`, err);
-  }
-
-  return kind === 'audio' ? createSilentAudioTrack() : createBlackVideoTrack();
-}
-
-async function replaceLocalTrack(kind, nextTrack) {
-  if (!state.localStream) return;
-
-  const oldTrack = getLocalTrack(kind);
-  if (nextTrack) {
-    const enabled = kind === 'audio' ? state.micEnabled : state.camEnabled;
-    nextTrack.enabled = !isFallbackTrack(nextTrack) && enabled;
-  }
-
-  if (oldTrack) {
-    state.localStream.removeTrack(oldTrack);
-  }
-  if (nextTrack) {
-    state.localStream.addTrack(nextTrack);
-  }
-
-  const sender = state.currentCall?.peerConnection
-    ?.getSenders()
-    .find(item => item.track?.kind === kind || oldTrack?.kind === kind);
-  if (sender) {
-    await sender.replaceTrack(nextTrack);
-  }
-
-  if (oldTrack && oldTrack !== nextTrack) {
-    stopTrack(oldTrack);
-  }
-
-  $('localVideo').srcObject = state.localStream;
-}
-
-async function refreshDeviceLists() {
-  if (!navigator.mediaDevices?.enumerateDevices) return;
-
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    updateDeviceSelect('audioDeviceSelect', devices.filter(device => device.kind === 'audioinput'), state.selectedAudioDeviceId, 'microfono');
-    updateDeviceSelect('videoDeviceSelect', devices.filter(device => device.kind === 'videoinput'), state.selectedVideoDeviceId, 'camara');
-  } catch (err) {
-    console.warn('No se pudieron leer los dispositivos.', err);
-  }
-}
-
-function updateDeviceSelect(id, devices, selectedValue, emptyLabel) {
-  const select = $(id);
-  if (!select) return;
-
-  const current = selectedValue || select.value || '__default__';
-  select.innerHTML = '';
-
-  const noneOption = document.createElement('option');
-  noneOption.value = '__none__';
-  noneOption.textContent = `Sin ${emptyLabel}`;
-  select.appendChild(noneOption);
-
-  if (devices.length > 0) {
-    const defaultOption = document.createElement('option');
-    defaultOption.value = '__default__';
-    defaultOption.textContent = `${emptyLabel[0].toUpperCase()}${emptyLabel.slice(1)} predeterminado`;
-    select.appendChild(defaultOption);
-  }
-
-  devices.forEach((device, index) => {
-    const option = document.createElement('option');
-    option.value = device.deviceId;
-    option.textContent = device.label || `${emptyLabel[0].toUpperCase()}${emptyLabel.slice(1)} ${index + 1}`;
-    select.appendChild(option);
-  });
-
-  select.value = Array.from(select.options).some(option => option.value === current)
-    ? current
-    : (devices.length > 0 ? '__default__' : '__none__');
-}
-
-async function ensureLocalMedia() {
-  if (state.localStream) return state.localStream;
-
-  const audioTrack = await getOutgoingTrack('audio', state.selectedAudioDeviceId || '__default__');
-  const videoTrack = await getOutgoingTrack('video', state.selectedVideoDeviceId || '__default__');
-
-  state.localStream = new MediaStream([audioTrack, videoTrack].filter(Boolean));
-  state.micEnabled = Boolean(audioTrack && !isFallbackTrack(audioTrack));
-  state.camEnabled = Boolean(videoTrack && !isFallbackTrack(videoTrack));
-  $('localVideo').srcObject = state.localStream;
-  await refreshDeviceLists();
+  state.micEnabled = !state.micEnabled;
+  track.enabled = state.micEnabled;
   updateControls();
-  return state.localStream;
 }
 
-function generateRoomCode() {
-  const bytes = new Uint8Array(ROOM_CODE_LENGTH);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, byte => String(byte % 10)).join('');
-}
-
-function normalizeRoomCode(value) {
-  return String(value || '').replace(/\s+/g, '');
-}
-
-function validateRoomCode(value) {
-  const code = normalizeRoomCode(value);
-  if (!/^\d{10,20}$/.test(code)) {
-    throw new Error('El codigo debe tener entre 10 y 20 digitos.');
+function toggleCam() {
+  const track = getLocalTrack('video');
+  if (!track || isFallbackTrack(track)) {
+    state.camEnabled = false;
+    $('camOffMsg').classList.remove('hidden');
+    updateControls();
+    setStatus('No hay camara activa. Elige una en ajustes.', 'info');
+    return;
   }
-  return code;
+  state.camEnabled = !state.camEnabled;
+  track.enabled = state.camEnabled;
+  $('camOffMsg').classList.toggle('hidden', state.camEnabled);
+  updateControls();
 }
 
-function createSignalingPeer(peerId) {
-  if (!window.Peer) {
-    throw new Error('No se pudo cargar PeerJS. Revisa la conexion a internet y vuelve a abrir la pagina.');
-  }
+function updateControls() {
+  const audioTrack = getLocalTrack('audio');
+  const videoTrack = getLocalTrack('video');
+  const micActive = Boolean(audioTrack && !isFallbackTrack(audioTrack) && state.micEnabled);
+  const camActive = Boolean(videoTrack && !isFallbackTrack(videoTrack) && state.camEnabled);
+  $('btnMic')?.classList.toggle('active', micActive);
+  $('btnMic')?.classList.toggle('muted-state', !micActive);
+  $('btnCam')?.classList.toggle('active', camActive);
+  $('btnCam')?.classList.toggle('muted-state', !camActive);
+  if ($('micLabel')) $('micLabel').textContent = micActive ? 'Micro activo' : 'Micro silenciado';
+  if ($('camLabel')) $('camLabel').textContent = camActive ? 'Camara activa' : 'Camara apagada';
+}
 
+async function toggleMicTest() {
+  if (state.micTestAudioContext) {
+    stopMicTest();
+    return;
+  }
+  const track = getLocalTrack('audio');
+  if (!track || isFallbackTrack(track)) {
+    setStatus('No hay microfono real para probar.', 'info');
+    return;
+  }
+  try {
+    const context = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    const stream = new MediaStream([track.clone()]);
+    const source = context.createMediaStreamSource(stream);
+    const gain = context.createGain();
+    gain.gain.value = 0.85;
+    source.connect(gain);
+    gain.connect(context.destination);
+    state.micTestStream = stream;
+    state.micTestAudioContext = context;
+    state.micTestSource = source;
+    state.micTestGain = gain;
+    $('btnMicTest').textContent = 'Parar prueba';
+  } catch (err) {
+    setStatus('No se pudo iniciar la prueba de microfono.', 'error');
+  }
+}
+
+function stopMicTest() {
+  state.micTestStream?.getTracks().forEach(track => track.stop());
+  state.micTestAudioContext?.close?.();
+  state.micTestStream = null;
+  state.micTestAudioContext = null;
+  state.micTestSource = null;
+  state.micTestGain = null;
+  const button = $('btnMicTest');
+  if (button) button.textContent = 'Prueba de microfono';
+}
+
+function createSignalingPeer(id) {
   closePeer();
-
-  const peer = new Peer(peerId || undefined, {
-    config: getRtcConfig(),
-    debug: 1,
-  });
-
-  state.peer = peer;
-
   return new Promise((resolve, reject) => {
+    const peer = new Peer(id || undefined, { debug: 0 });
+    state.peer = peer;
     let settled = false;
-    const settle = callback => value => {
+    peer.on('open', openId => {
       if (settled) return;
       settled = true;
-      callback(value);
-    };
-
-    peer.on('open', settle(resolve));
+      resolve(openId);
+    });
     peer.on('error', err => {
       if (!settled) {
         settled = true;
-        peer.destroy();
         state.peer = null;
+        peer.destroy();
         reject(err);
-        return;
+      } else {
+        setStatus(peerErrorMessage(err), 'error');
       }
-
-      setStatus(peerErrorMessage(err), 'error');
-    });
-    peer.on('disconnected', () => {
-      setStatus('Se perdio la conexion con el servidor. La llamada puede cortarse si aun no habia empezado.', 'error');
     });
   });
 }
 
 async function createRoomPeer() {
   let lastError = null;
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     const code = generateRoomCode();
-
     try {
       await createSignalingPeer(code);
       return code;
@@ -1658,7 +1449,6 @@ async function createRoomPeer() {
       if (err?.type !== 'unavailable-id') throw err;
     }
   }
-
   throw lastError || new Error('No se pudo crear un codigo libre.');
 }
 
@@ -1670,69 +1460,30 @@ function attachRemoteStream(stream) {
 }
 
 function isActiveMediaCall(call) {
-  const peerConnection = call?.peerConnection;
-  if (!peerConnection) return false;
-
-  const connectionState = peerConnection.connectionState || peerConnection.iceConnectionState;
+  const pc = call?.peerConnection;
+  if (!pc) return false;
+  const connectionState = pc.connectionState || pc.iceConnectionState;
   return ['new', 'checking', 'connecting', 'connected', 'completed'].includes(connectionState);
 }
 
 function clearRemoteCall(call, message) {
   if (call && state.currentCall && call !== state.currentCall) return;
-
   state.currentCall = null;
   state.remoteStream = null;
   $('remoteVideo').srcObject = null;
   $('waitingPanel').classList.remove('hidden');
-
-  if (message) {
-    setStatus(message, 'info');
-  }
-}
-
-async function changeAudioDevice() {
-  const select = $('audioDeviceSelect');
-  if (!select || !state.localStream) return;
-
-  stopMicTest();
-  state.selectedAudioDeviceId = select.value;
-  state.micEnabled = select.value !== '__none__';
-
-  const nextTrack = await getOutgoingTrack('audio', select.value);
-  await replaceLocalTrack('audio', nextTrack);
-  await refreshDeviceLists();
-  updateControls();
-  setStatus(!nextTrack || isFallbackTrack(nextTrack) ? 'Microfono desactivado o no disponible.' : 'Microfono actualizado.', !nextTrack || isFallbackTrack(nextTrack) ? 'info' : 'success');
-}
-
-async function changeVideoDevice() {
-  const select = $('videoDeviceSelect');
-  if (!select || !state.localStream) return;
-
-  state.selectedVideoDeviceId = select.value;
-  state.camEnabled = select.value !== '__none__';
-
-  const nextTrack = await getOutgoingTrack('video', select.value);
-  await replaceLocalTrack('video', nextTrack);
-  await refreshDeviceLists();
-  updateControls();
-  setStatus(!nextTrack || isFallbackTrack(nextTrack) ? 'Camara desactivada o no disponible.' : 'Camara actualizada.', !nextTrack || isFallbackTrack(nextTrack) ? 'info' : 'success');
+  if (message) setStatus(message, 'info');
 }
 
 function bindCallEvents(call) {
   state.currentCall = call;
   setRemoteName(call.metadata?.name || state.remoteName);
-
-  call.on('stream', stream => {
-    attachRemoteStream(stream);
-  });
-
+  call.on('stream', attachRemoteStream);
   call.on('close', () => {
     clearRemoteCall(call, state.role === 'creator'
       ? 'La otra persona salio. Puede volver a unirse con el mismo codigo.'
       : 'La llamada se ha cerrado.');
   });
-
   call.on('error', err => {
     clearRemoteCall(call);
     setStatus(peerErrorMessage(err), 'error');
@@ -1744,37 +1495,38 @@ function answerIncomingCall(call) {
     call.close();
     return;
   }
-
   if (state.currentCall) {
     if (isActiveMediaCall(state.currentCall)) {
       call.close();
       return;
     }
-
     clearRemoteCall(state.currentCall, 'Reconectando a la otra persona...');
   }
-
+  setRemoteName(call.metadata?.name || '');
   setStatus('Otra persona entro. Activando llamada...', 'info');
   bindCallEvents(call);
   call.answer(state.localStream, { metadata: { name: state.profile } });
 }
 
 function closePeer() {
-  if (state.currentCall) {
-    state.currentCall.close();
-  }
-
-  if (state.dataConnection) {
-    state.dataConnection.close?.();
-  }
-
-  if (state.peer) {
-    state.peer.destroy();
-  }
-
+  state.currentCall?.close?.();
+  state.dataConnection?.close?.();
+  state.peer?.destroy?.();
   state.currentCall = null;
   state.dataConnection = null;
   state.peer = null;
+}
+
+function stopFallbackHelpers() {
+  try {
+    state.audioFallbackOscillator?.stop?.();
+    state.audioFallbackContext?.close?.();
+  } catch (err) {
+    // Ignore cleanup errors from already-stopped tracks.
+  }
+  state.audioFallbackOscillator = null;
+  state.audioFallbackContext = null;
+  state.videoFallbackCanvas = null;
 }
 
 function prepareCallScreen(role) {
@@ -1791,14 +1543,14 @@ function prepareCallScreen(role) {
   $('creatorPanel').classList.toggle('hidden', role !== 'creator');
   $('guestPanel').classList.toggle('hidden', role !== 'guest');
   $('creatorQuestionNav')?.classList.toggle('hidden', role !== 'creator');
-  $('creatorLifelines')?.classList.toggle('hidden', role !== 'creator');
+  $('creatorLifelines')?.classList.remove('hidden');
+  $('creatorLifelines')?.classList.toggle('viewer-lifelines', role !== 'creator');
   state.phoneLifelineUsed = false;
   state.rouletteLifelineUsed = false;
+  state.answerDelayEnabled = true;
+  syncAnswerDelayCheckbox();
   resetPhoneLifeline();
   resetRouletteLifeline();
-  if (role !== 'creator') {
-    closeRouletteLifeline(true);
-  }
   resetQuizDisplay();
   closeSettingsPanel();
   showScreen('roomScreen');
@@ -1806,12 +1558,9 @@ function prepareCallScreen(role) {
 
 async function createManualOffer() {
   if (!requireProfile('createMsg')) return;
-
-  unlockQuizAudio();
   prepareCallScreen('creator');
   setStatus('Preparando camara, microfono y codigo corto...', 'info');
   $('manualOfferCode').value = '';
-
   try {
     await ensureLocalMedia();
     const code = await createRoomPeer();
@@ -1829,8 +1578,6 @@ async function createManualOffer() {
 
 async function generateManualAnswer() {
   if (!requireProfile('joinMsg')) return;
-
-  unlockQuizAudio();
   let code;
   try {
     code = validateRoomCode($('manualReceivedCode').value);
@@ -1838,28 +1585,16 @@ async function generateManualAnswer() {
     showMsg('joinMsg', 'error', err.message);
     return;
   }
-
   prepareCallScreen('guest');
   state.currentRoomCode = code;
   setStatus('Entrando con el codigo corto...', 'info');
-
   try {
     await ensureLocalMedia();
     await createSignalingPeer();
-
-    const call = state.peer.call(code, state.localStream, {
-      metadata: { name: state.profile },
-    });
-
-    if (!call) {
-      throw new Error('No se pudo iniciar la llamada.');
-    }
-
+    const call = state.peer.call(code, state.localStream, { metadata: { name: state.profile } });
+    if (!call) throw new Error('No se pudo iniciar la llamada.');
     bindCallEvents(call);
-    bindDataConnection(state.peer.connect(code, {
-      reliable: true,
-      metadata: { name: state.profile },
-    }));
+    bindDataConnection(state.peer.connect(code, { reliable: true, metadata: { name: state.profile } }));
     setStatus('Llamando al creador. Espera unos segundos...', 'info');
   } catch (err) {
     setStatus(setupErrorMessage(err), 'error');
@@ -1873,7 +1608,6 @@ async function copyCode(id) {
     setStatus('Todavia no hay codigo para copiar.', 'error');
     return;
   }
-
   try {
     await navigator.clipboard.writeText(value);
     setStatus('Codigo copiado.', 'success');
@@ -1888,7 +1622,6 @@ async function copyCode(id) {
 async function pasteCode(id) {
   const el = $(id);
   if (!el) return;
-
   try {
     el.value = await navigator.clipboard.readText();
   } catch (err) {
@@ -1897,135 +1630,12 @@ async function pasteCode(id) {
   }
 }
 
-function toggleMic() {
-  const track = getLocalTrack('audio');
-  if (!track || isFallbackTrack(track)) {
-    state.micEnabled = false;
-    updateControls();
-    setStatus('No hay microfono activo. Elige uno en ajustes.', 'info');
-    return;
-  }
-
-  state.micEnabled = !state.micEnabled;
-  track.enabled = state.micEnabled;
-  updateControls();
-}
-
-function toggleCam() {
-  const track = getLocalTrack('video');
-  if (!track || isFallbackTrack(track)) {
-    state.camEnabled = false;
-    updateControls();
-    setStatus('No hay camara activa. Elige una en ajustes.', 'info');
-    return;
-  }
-
-  state.camEnabled = !state.camEnabled;
-  track.enabled = state.camEnabled;
-  updateControls();
-}
-
-function updateControls() {
-  const audioTrack = getLocalTrack('audio');
-  const videoTrack = getLocalTrack('video');
-  const hasMic = Boolean(audioTrack && !isFallbackTrack(audioTrack));
-  const hasCam = Boolean(videoTrack && !isFallbackTrack(videoTrack));
-
-  $('micLabel').textContent = hasMic
-    ? (state.micEnabled ? 'Micro activo' : 'Micro silenciado')
-    : 'Sin microfono';
-  $('camLabel').textContent = hasCam
-    ? (state.camEnabled ? 'Camara activa' : 'Camara apagada')
-    : 'Sin camara';
-  $('btnMic').classList.toggle('active', hasMic && state.micEnabled);
-  $('btnCam').classList.toggle('active', hasCam && state.camEnabled);
-  $('btnMic').classList.toggle('muted-state', !hasMic || !state.micEnabled);
-  $('btnCam').classList.toggle('muted-state', !hasCam || !state.camEnabled);
-  $('camOffMsg').classList.toggle('hidden', hasCam && state.camEnabled);
-}
-
-async function toggleMicTest() {
-  if (state.micTestStream) {
-    stopMicTest();
-    return;
-  }
-
-  try {
-    const deviceId = $('audioDeviceSelect')?.value || state.selectedAudioDeviceId || '__default__';
-    if (deviceId === '__none__') {
-      setStatus('Elige un microfono para probarlo.', 'info');
-      return;
-    }
-
-    const currentTrack = getLocalTrack('audio');
-    const canCloneCurrentTrack = currentTrack
-      && !isFallbackTrack(currentTrack)
-      && currentTrack.readyState === 'live'
-      && (deviceId === '__default__' || deviceId === state.selectedAudioDeviceId || !state.selectedAudioDeviceId);
-    const track = canCloneCurrentTrack ? currentTrack.clone() : await getMicTestTrack(deviceId);
-    if (!track) {
-      setStatus('No se pudo abrir ningun microfono para la prueba.', 'error');
-      return;
-    }
-
-    state.micTestStream = new MediaStream([track]);
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) {
-      state.micTestAudioContext = new AudioContextClass({ latencyHint: 'interactive' });
-      await state.micTestAudioContext.resume?.();
-      state.micTestSource = state.micTestAudioContext.createMediaStreamSource(state.micTestStream);
-      state.micTestGain = state.micTestAudioContext.createGain();
-      state.micTestGain.gain.value = 0.9;
-      state.micTestSource.connect(state.micTestGain);
-      state.micTestGain.connect(state.micTestAudioContext.destination);
-    }
-
-    const audio = $('micTestAudio');
-    audio.srcObject = state.micTestStream;
-    audio.muted = false;
-    audio.volume = 0;
-    if (!state.micTestAudioContext) {
-      audio.volume = 1;
-      await audio.play();
-    }
-
-    $('btnMicTest').textContent = 'Detener prueba de microfono';
-    setStatus('Prueba activa: te estas escuchando con el microfono seleccionado.', 'success');
-  } catch (err) {
-    stopMicTest();
-    setStatus(mediaErrorMessage(err), 'error');
-  }
-}
-
-function stopMicTest() {
-  if (!state.micTestStream) return;
-
-  state.micTestSource?.disconnect?.();
-  state.micTestGain?.disconnect?.();
-  state.micTestAudioContext?.close?.();
-  state.micTestSource = null;
-  state.micTestGain = null;
-  state.micTestAudioContext = null;
-
-  state.micTestStream.getTracks().forEach(track => track.stop());
-  state.micTestStream = null;
-
-  const audio = $('micTestAudio');
-  if (audio) {
-    audio.pause();
-    audio.srcObject = null;
-  }
-
-  const button = $('btnMicTest');
-  if (button) button.textContent = 'Prueba de microfono';
-}
-
 function toggleSettingsPanel() {
-  $('settingsPanel').classList.toggle('hidden');
+  $('settingsPanel')?.classList.toggle('hidden');
 }
 
 function closeSettingsPanel() {
-  $('settingsPanel').classList.add('hidden');
+  $('settingsPanel')?.classList.add('hidden');
 }
 
 function clearField(id) {
@@ -2036,6 +1646,7 @@ function clearField(id) {
 function leaveRoom() {
   closePeer();
   stopMicTest();
+  stopPhoneTimerSound();
   state.localStream?.getTracks().forEach(track => track.stop());
   stopFallbackHelpers();
   state.localStream = null;
@@ -2047,7 +1658,6 @@ function leaveRoom() {
   state.quizEliminatedAnswers = Array.from({ length: CREATOR_QUESTION_COUNT }, () => []);
   state.micEnabled = true;
   state.camEnabled = true;
-
   $('localVideo').srcObject = null;
   $('remoteVideo').srcObject = null;
   clearField('manualOfferCode');
@@ -2065,15 +1675,23 @@ function leaveRoom() {
   showScreen('menuScreen');
 }
 
+function setupErrorMessage(err) {
+  return err?.message || 'No se pudo preparar la llamada.';
+}
+
+function peerErrorMessage(err) {
+  if (err?.type === 'peer-unavailable') return 'No se encontro una sala con ese codigo.';
+  if (err?.type === 'unavailable-id') return 'Ese codigo ya esta ocupado. Prueba otra vez.';
+  return err?.message || 'Error de conexion.';
+}
+
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     closeSettingsPanel();
     closeCreatorQuestionsPanel();
   }
-
   const writingTarget = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName);
   if (state.role !== 'creator' || writingTarget) return;
-
   if (event.key === 'ArrowLeft') {
     event.preventDefault();
     showPreviousCreatorQuestion();
@@ -2083,18 +1701,16 @@ document.addEventListener('keydown', event => {
   }
 });
 
-['pointerdown', 'click', 'keydown', 'touchstart'].forEach(eventName => {
-  document.addEventListener(eventName, unlockQuizAudio, { capture: true, passive: true });
-});
+$('creatorQuestionsList')?.addEventListener('input', event => updateCreatorQuestionFromInput(event.target));
+$('creatorQuestionsList')?.addEventListener('change', event => updateCreatorQuestionFromInput(event.target));
 
-preloadQuizSounds();
+if (navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', refreshDeviceLists);
+}
 
-$('creatorQuestionsList')?.addEventListener('input', event => {
-  updateCreatorQuestionFromInput(event.target);
-});
-
-$('creatorQuestionsList')?.addEventListener('change', event => {
-  updateCreatorQuestionFromInput(event.target);
+window.addEventListener('beforeunload', () => {
+  state.localStream?.getTracks().forEach(track => track.stop());
+  closePeer();
 });
 
 updateProfileBadge();

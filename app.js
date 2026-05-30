@@ -5,6 +5,11 @@ const ROOM_CODE_LENGTH = 12;
 const CREATOR_QUESTION_COUNT = 15;
 const CREATOR_QUESTION_OPTIONS = ['A', 'B', 'C', 'D'];
 const CREATOR_QUESTIONS_FALLBACK_KEY = 'laFeria_creator_questions';
+const SOUNDS = {
+  applauseSound: 'sounds/applause-new.mp3',
+  failSound: 'sounds/fail-new.mp3',
+};
+const QUIZ_SOUND_VOLUME = 0.35;
 
 const RTC_CONFIG = {
   iceServers: [
@@ -31,12 +36,22 @@ const state = {
   audioFallbackContext: null,
   audioFallbackOscillator: null,
   videoFallbackCanvas: null,
+  quizAudioContext: null,
+  quizAudioBuffers: {},
+  quizAudioUnlocked: false,
+  quizActiveSounds: [],
   micTestStream: null,
+  micTestAudioContext: null,
+  micTestSource: null,
+  micTestGain: null,
   micEnabled: true,
   camEnabled: true,
   currentRoomCode: '',
   creatorQuestions: [],
   currentQuestionIndex: -1,
+  quizRevealStep: -1,
+  quizSelectedAnswers: Array(CREATOR_QUESTION_COUNT).fill(null),
+  quizResults: Array(CREATOR_QUESTION_COUNT).fill(null),
 };
 
 function $(id) {
@@ -249,35 +264,65 @@ function closeCreatorQuestionsPanel() {
   $('creatorQuestionsModal')?.classList.add('hidden');
 }
 
-function resetQuizDisplay() {
+function resetQuizRound() {
   state.currentQuestionIndex = -1;
+  state.quizRevealStep = -1;
+  state.quizSelectedAnswers = Array(CREATOR_QUESTION_COUNT).fill(null);
+  state.quizResults = Array(CREATOR_QUESTION_COUNT).fill(null);
+}
+
+function resetQuizDisplay() {
+  resetQuizRound();
   const questionLine = $('quizQuestionLine');
   if (questionLine) questionLine.textContent = '';
+  if (questionLine) questionLine.classList.remove('is-visible');
   document.querySelectorAll('.quiz-answer-line').forEach(line => {
     line.textContent = '';
+    line.disabled = true;
+    line.classList.remove('is-visible', 'selected', 'correct-answer', 'wrong-answer');
   });
   document.querySelectorAll('.quiz-progress span').forEach(item => {
-    item.classList.remove('pending');
+    item.classList.remove('pending', 'current', 'correct', 'wrong');
     item.classList.add('locked');
   });
 }
 
-function displayQuizQuestion(index, question) {
+function renderQuizProgress() {
+  document.querySelectorAll('.quiz-progress span').forEach((item, itemIndex) => {
+    const result = state.quizResults[itemIndex];
+    item.classList.toggle('current', itemIndex === state.currentQuestionIndex);
+    item.classList.toggle('correct', itemIndex !== state.currentQuestionIndex && result === 'correct');
+    item.classList.toggle('wrong', itemIndex !== state.currentQuestionIndex && result === 'wrong');
+    item.classList.toggle('locked', itemIndex !== state.currentQuestionIndex && !result);
+    item.classList.remove('pending');
+  });
+}
+
+function displayQuizQuestion(index, question, revealStep = state.quizRevealStep) {
   const safeQuestion = normalizeCreatorQuestion(question);
   const questionLine = $('quizQuestionLine');
   if (questionLine) {
     questionLine.textContent = safeQuestion.prompt || `Pregunta ${index + 1}`;
+    questionLine.classList.toggle('is-visible', revealStep >= 0);
   }
 
   CREATOR_QUESTION_OPTIONS.forEach(option => {
+    const optionStep = CREATOR_QUESTION_OPTIONS.indexOf(option) + 1;
     const line = document.querySelector(`.quiz-answer-line[data-option="${option}"]`);
-    if (line) line.textContent = `${option}: ${safeQuestion.answers[option] || ''}`;
+    if (!line) return;
+
+    const selected = state.quizSelectedAnswers[index] === option;
+    const result = state.quizResults[index];
+    const visible = revealStep >= optionStep;
+    line.textContent = `${option}: ${safeQuestion.answers[option] || ''}`;
+    line.disabled = state.role !== 'creator' || !visible || Boolean(state.quizSelectedAnswers[index]);
+    line.classList.toggle('is-visible', visible);
+    line.classList.toggle('selected', selected);
+    line.classList.toggle('correct-answer', selected && result === 'correct');
+    line.classList.toggle('wrong-answer', selected && result === 'wrong');
   });
 
-  document.querySelectorAll('.quiz-progress span').forEach((item, itemIndex) => {
-    item.classList.toggle('pending', itemIndex === index);
-    item.classList.toggle('locked', itemIndex !== index);
-  });
+  renderQuizProgress();
 }
 
 function sendDataMessage(message) {
@@ -292,12 +337,41 @@ function sendDataMessage(message) {
 }
 
 function handleDataMessage(data) {
-  if (!data || data.type !== 'quiz-question') return;
+  if (!data) return;
+
+  if (data.type === 'quiz-selection') {
+    const index = Number(data.index);
+    if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
+
+    state.quizSelectedAnswers[index] = data.option;
+    state.quizResults[index] = data.result;
+    if (Array.isArray(data.quizResults)) {
+      state.quizResults = data.quizResults.slice(0, CREATOR_QUESTION_COUNT);
+    }
+    if (state.currentQuestionIndex === index) {
+      displayQuizQuestion(state.currentQuestionIndex, state.creatorQuestions[state.currentQuestionIndex], state.quizRevealStep);
+    } else {
+      renderQuizProgress();
+    }
+    playQuizResultEffects(data.result);
+    return;
+  }
+
+  if (data.type !== 'quiz-question' && data.type !== 'quiz-state') return;
 
   const index = Number(data.index);
   if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
   state.currentQuestionIndex = index;
-  displayQuizQuestion(index, data.question);
+  state.quizRevealStep = Number.isInteger(data.revealStep) ? data.revealStep : 4;
+  state.creatorQuestions = normalizeCreatorQuestions(state.creatorQuestions);
+  state.creatorQuestions[index] = normalizeCreatorQuestion(data.question);
+  if (Array.isArray(data.quizSelectedAnswers)) {
+    state.quizSelectedAnswers = data.quizSelectedAnswers.slice(0, CREATOR_QUESTION_COUNT);
+  }
+  if (Array.isArray(data.quizResults)) {
+    state.quizResults = data.quizResults.slice(0, CREATOR_QUESTION_COUNT);
+  }
+  displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
 }
 
 function bindDataConnection(connection) {
@@ -310,11 +384,7 @@ function bindDataConnection(connection) {
   state.dataConnection = connection;
   connection.on('open', () => {
     if (state.role === 'creator' && state.currentQuestionIndex >= 0) {
-      sendDataMessage({
-        type: 'quiz-question',
-        index: state.currentQuestionIndex,
-        question: state.creatorQuestions[state.currentQuestionIndex],
-      });
+      sendQuizState();
     }
   });
   connection.on('data', handleDataMessage);
@@ -340,18 +410,251 @@ function showCreatorQuestion(index) {
   }
 
   state.currentQuestionIndex = index;
+  state.quizRevealStep = 0;
   const question = state.creatorQuestions[index];
-  displayQuizQuestion(index, question);
-  sendDataMessage({ type: 'quiz-question', index, question });
+  displayQuizQuestion(index, question, state.quizRevealStep);
+  sendQuizState();
   setStatus(`Pregunta ${index + 1} mostrada.`, 'success');
 }
 
+function sendQuizState() {
+  if (state.currentQuestionIndex < 0) return;
+
+  sendDataMessage({
+    type: 'quiz-state',
+    index: state.currentQuestionIndex,
+    revealStep: state.quizRevealStep,
+    question: state.creatorQuestions[state.currentQuestionIndex],
+    quizSelectedAnswers: state.quizSelectedAnswers,
+    quizResults: state.quizResults,
+  });
+}
+
+function getQuizAudioContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+
+  if (!state.quizAudioContext || state.quizAudioContext.state === 'closed') {
+    state.quizAudioContext = new AudioContextClass({ latencyHint: 'interactive' });
+  }
+
+  return state.quizAudioContext;
+}
+
+async function unlockQuizAudio() {
+  const context = getQuizAudioContext();
+  if (!context) return false;
+
+  try {
+    await context.resume?.();
+    if (!state.quizAudioUnlocked) {
+      const buffer = context.createBuffer(1, 1, context.sampleRate);
+      const source = context.createBufferSource();
+      const gain = context.createGain();
+      gain.gain.value = 0;
+      source.buffer = buffer;
+      source.connect(gain);
+      gain.connect(context.destination);
+      source.start(0);
+      state.quizAudioUnlocked = true;
+    }
+    preloadQuizSounds();
+    return context.state === 'running';
+  } catch (err) {
+    console.warn('No se pudo desbloquear el audio.', err);
+    return false;
+  }
+}
+
+async function preloadQuizSounds() {
+  const context = getQuizAudioContext();
+  if (!context) return;
+
+  await Promise.all(Object.entries(SOUNDS).map(async ([id, source]) => {
+    if (state.quizAudioBuffers[id]) return;
+
+    try {
+      const response = await fetch(source, { cache: 'reload' });
+      const arrayBuffer = await response.arrayBuffer();
+      state.quizAudioBuffers[id] = await context.decodeAudioData(arrayBuffer);
+    } catch (err) {
+      console.warn(`No se pudo precargar ${id}.`, err);
+    }
+  }));
+}
+
 function showPreviousCreatorQuestion() {
-  showCreatorQuestion(state.currentQuestionIndex - 1);
+  if (state.role !== 'creator') return;
+  closeSettingsPanel();
+
+  if (state.currentQuestionIndex < 0) {
+    setStatus('Todavia no hay ninguna pregunta en pantalla.', 'info');
+    return;
+  }
+
+  loadCreatorQuestions();
+  if (state.quizRevealStep > 0) {
+    state.quizRevealStep -= 1;
+    displayQuizQuestion(state.currentQuestionIndex, state.creatorQuestions[state.currentQuestionIndex], state.quizRevealStep);
+    sendQuizState();
+    return;
+  }
+
+  if (state.currentQuestionIndex === 0) {
+    setStatus('Ya estas en la primera pregunta.', 'info');
+    return;
+  }
+
+  state.currentQuestionIndex -= 1;
+  state.quizRevealStep = 4;
+  displayQuizQuestion(state.currentQuestionIndex, state.creatorQuestions[state.currentQuestionIndex], state.quizRevealStep);
+  sendQuizState();
 }
 
 function showNextCreatorQuestion() {
+  if (state.role !== 'creator') return;
+  closeSettingsPanel();
+
+  if (state.currentQuestionIndex < 0) {
+    showCreatorQuestion(0);
+    return;
+  }
+
+  loadCreatorQuestions();
+  if (state.quizSelectedAnswers[state.currentQuestionIndex]) {
+    showCreatorQuestion(state.currentQuestionIndex + 1);
+    return;
+  }
+
+  if (state.quizRevealStep < 4) {
+    state.quizRevealStep += 1;
+    displayQuizQuestion(state.currentQuestionIndex, state.creatorQuestions[state.currentQuestionIndex], state.quizRevealStep);
+    sendQuizState();
+    return;
+  }
+
   showCreatorQuestion(state.currentQuestionIndex + 1);
+}
+
+function playQuizSound(id) {
+  const source = SOUNDS[id] || $(id)?.getAttribute('src');
+  if (!source) return;
+
+  let mediaStarted = false;
+  try {
+    const audio = new Audio(source);
+    audio.preload = 'auto';
+    audio.volume = QUIZ_SOUND_VOLUME;
+    state.quizActiveSounds.push(audio);
+    audio.addEventListener('ended', () => {
+      state.quizActiveSounds = state.quizActiveSounds.filter(item => item !== audio);
+    }, { once: true });
+    audio.addEventListener('error', () => {
+      state.quizActiveSounds = state.quizActiveSounds.filter(item => item !== audio);
+    }, { once: true });
+
+    const playPromise = audio.play();
+    mediaStarted = true;
+    playPromise?.catch(err => {
+      console.warn('No se pudo reproducir el archivo de sonido.', err);
+      state.quizActiveSounds = state.quizActiveSounds.filter(item => item !== audio);
+    });
+  } catch (err) {
+    console.warn('No se pudo iniciar el sonido.', err);
+  }
+
+  const context = getQuizAudioContext();
+  if (!mediaStarted && context && state.quizAudioBuffers[id]) {
+    playBufferedQuizSound(id);
+  }
+
+  unlockQuizAudio();
+}
+
+function playBufferedQuizSound(id) {
+  const context = getQuizAudioContext();
+  const buffer = state.quizAudioBuffers[id];
+  if (!context || !buffer) return false;
+
+  try {
+    const player = context.createBufferSource();
+    const gain = context.createGain();
+    gain.gain.value = QUIZ_SOUND_VOLUME;
+    player.buffer = buffer;
+    player.connect(gain);
+    gain.connect(context.destination);
+    player.start(0);
+    return true;
+  } catch (err) {
+    console.warn('No se pudo reproducir el sonido precargado.', err);
+    return false;
+  }
+}
+
+function playQuizResultEffects(result) {
+  if (result === 'correct') {
+    playQuizSound('applauseSound');
+    launchConfetti();
+    return;
+  }
+
+  if (result === 'wrong') {
+    playQuizSound('failSound');
+    launchSadFace();
+  }
+}
+
+function selectQuizAnswer(option) {
+  if (state.role !== 'creator') return;
+  if (state.currentQuestionIndex < 0) return;
+  if (!CREATOR_QUESTION_OPTIONS.includes(option)) return;
+  if (state.quizRevealStep < CREATOR_QUESTION_OPTIONS.indexOf(option) + 1) return;
+  if (state.quizSelectedAnswers[state.currentQuestionIndex]) return;
+
+  const question = normalizeCreatorQuestion(state.creatorQuestions[state.currentQuestionIndex]);
+  const result = question.correct === option ? 'correct' : 'wrong';
+  state.quizSelectedAnswers[state.currentQuestionIndex] = option;
+  state.quizResults[state.currentQuestionIndex] = result;
+  displayQuizQuestion(state.currentQuestionIndex, question, state.quizRevealStep);
+  playQuizResultEffects(result);
+  sendDataMessage({
+    type: 'quiz-selection',
+    index: state.currentQuestionIndex,
+    option,
+    result,
+    quizResults: state.quizResults,
+  });
+}
+
+function launchConfetti() {
+  const layer = document.createElement('div');
+  layer.className = 'confetti-layer';
+  document.body.appendChild(layer);
+
+  const colors = ['#42e37f', '#ffd43d', '#ff2557', '#26b7ff', '#fff3cf'];
+  for (let index = 0; index < 180; index += 1) {
+    const piece = document.createElement('span');
+    piece.className = 'confetti-piece';
+    piece.style.left = `${Math.random() * 100}%`;
+    piece.style.width = `${7 + Math.random() * 9}px`;
+    piece.style.height = `${12 + Math.random() * 16}px`;
+    piece.style.background = colors[index % colors.length];
+    piece.style.animationDelay = `${Math.random() * 0.58}s`;
+    piece.style.animationDuration = `${2.1 + Math.random() * 1.1}s`;
+    piece.style.transform = `rotate(${Math.random() * 180}deg)`;
+    piece.style.setProperty('--drift', `${(Math.random() - 0.5) * 360}px`);
+    layer.appendChild(piece);
+  }
+
+  setTimeout(() => layer.remove(), 3800);
+}
+
+function launchSadFace() {
+  const face = document.createElement('div');
+  face.className = 'sad-face-feedback';
+  face.textContent = '😢';
+  document.body.appendChild(face);
+  setTimeout(() => face.remove(), 3200);
 }
 
 function updateProfileBadge() {
@@ -523,6 +826,30 @@ function deviceConstraint(kind, deviceId) {
   }
 
   return true;
+}
+
+function micTestConstraint(deviceId) {
+  const constraint = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  };
+
+  if (deviceId && deviceId !== '__default__' && deviceId !== '__none__') {
+    constraint.deviceId = { exact: deviceId };
+  }
+
+  return constraint;
+}
+
+async function getMicTestTrack(deviceId) {
+  if (!navigator.mediaDevices?.getUserMedia || deviceId === '__none__') return null;
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: micTestConstraint(deviceId),
+    video: false,
+  });
+  return stream.getAudioTracks()[0] || null;
 }
 
 async function getDeviceTrack(kind, deviceId) {
@@ -718,6 +1045,27 @@ function attachRemoteStream(stream) {
   setStatus('Conexion establecida.', 'success');
 }
 
+function isActiveMediaCall(call) {
+  const peerConnection = call?.peerConnection;
+  if (!peerConnection) return false;
+
+  const connectionState = peerConnection.connectionState || peerConnection.iceConnectionState;
+  return ['new', 'checking', 'connecting', 'connected', 'completed'].includes(connectionState);
+}
+
+function clearRemoteCall(call, message) {
+  if (call && state.currentCall && call !== state.currentCall) return;
+
+  state.currentCall = null;
+  state.remoteStream = null;
+  $('remoteVideo').srcObject = null;
+  $('waitingPanel').classList.remove('hidden');
+
+  if (message) {
+    setStatus(message, 'info');
+  }
+}
+
 async function changeAudioDevice() {
   const select = $('audioDeviceSelect');
   if (!select || !state.localStream) return;
@@ -755,10 +1103,13 @@ function bindCallEvents(call) {
   });
 
   call.on('close', () => {
-    setStatus('La llamada se ha cerrado.', 'info');
+    clearRemoteCall(call, state.role === 'creator'
+      ? 'La otra persona salio. Puede volver a unirse con el mismo codigo.'
+      : 'La llamada se ha cerrado.');
   });
 
   call.on('error', err => {
+    clearRemoteCall(call);
     setStatus(peerErrorMessage(err), 'error');
   });
 }
@@ -770,8 +1121,12 @@ function answerIncomingCall(call) {
   }
 
   if (state.currentCall) {
-    call.close();
-    return;
+    if (isActiveMediaCall(state.currentCall)) {
+      call.close();
+      return;
+    }
+
+    clearRemoteCall(state.currentCall, 'Reconectando a la otra persona...');
   }
 
   setStatus('Otra persona entro. Activando llamada...', 'info');
@@ -817,6 +1172,7 @@ function prepareCallScreen(role) {
 async function createManualOffer() {
   if (!requireProfile('createMsg')) return;
 
+  unlockQuizAudio();
   prepareCallScreen('creator');
   setStatus('Preparando camara, microfono y codigo corto...', 'info');
   $('manualOfferCode').value = '';
@@ -839,6 +1195,7 @@ async function createManualOffer() {
 async function generateManualAnswer() {
   if (!requireProfile('joinMsg')) return;
 
+  unlockQuizAudio();
   let code;
   try {
     code = validateRoomCode($('manualReceivedCode').value);
@@ -962,18 +1319,37 @@ async function toggleMicTest() {
       return;
     }
 
-    const track = await getDeviceTrack('audio', deviceId);
+    const currentTrack = getLocalTrack('audio');
+    const canCloneCurrentTrack = currentTrack
+      && !isFallbackTrack(currentTrack)
+      && currentTrack.readyState === 'live'
+      && (deviceId === '__default__' || deviceId === state.selectedAudioDeviceId || !state.selectedAudioDeviceId);
+    const track = canCloneCurrentTrack ? currentTrack.clone() : await getMicTestTrack(deviceId);
     if (!track) {
       setStatus('No se pudo abrir ningun microfono para la prueba.', 'error');
       return;
     }
 
     state.micTestStream = new MediaStream([track]);
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      state.micTestAudioContext = new AudioContextClass({ latencyHint: 'interactive' });
+      await state.micTestAudioContext.resume?.();
+      state.micTestSource = state.micTestAudioContext.createMediaStreamSource(state.micTestStream);
+      state.micTestGain = state.micTestAudioContext.createGain();
+      state.micTestGain.gain.value = 0.9;
+      state.micTestSource.connect(state.micTestGain);
+      state.micTestGain.connect(state.micTestAudioContext.destination);
+    }
+
     const audio = $('micTestAudio');
     audio.srcObject = state.micTestStream;
     audio.muted = false;
-    audio.volume = 1;
-    await audio.play();
+    audio.volume = 0;
+    if (!state.micTestAudioContext) {
+      audio.volume = 1;
+      await audio.play();
+    }
 
     $('btnMicTest').textContent = 'Detener prueba de microfono';
     setStatus('Prueba activa: te estas escuchando con el microfono seleccionado.', 'success');
@@ -985,6 +1361,13 @@ async function toggleMicTest() {
 
 function stopMicTest() {
   if (!state.micTestStream) return;
+
+  state.micTestSource?.disconnect?.();
+  state.micTestGain?.disconnect?.();
+  state.micTestAudioContext?.close?.();
+  state.micTestSource = null;
+  state.micTestGain = null;
+  state.micTestAudioContext = null;
 
   state.micTestStream.getTracks().forEach(track => track.stop());
   state.micTestStream = null;
@@ -1055,6 +1438,12 @@ document.addEventListener('keydown', event => {
     showNextCreatorQuestion();
   }
 });
+
+['pointerdown', 'click', 'keydown', 'touchstart'].forEach(eventName => {
+  document.addEventListener(eventName, unlockQuizAudio, { capture: true, passive: true });
+});
+
+preloadQuizSounds();
 
 $('creatorQuestionsList')?.addEventListener('input', event => {
   updateCreatorQuestionFromInput(event.target);

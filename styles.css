@@ -819,6 +819,29 @@ textarea:focus {
   box-shadow: none;
 }
 
+.quiz-progress .current {
+  color: #101014;
+  background: #fff3cf;
+  border-color: rgba(255, 255, 255, 0.86);
+  box-shadow:
+    0 0 0 4px rgba(255, 212, 61, 0.18),
+    0 0 18px rgba(255, 212, 61, 0.52);
+}
+
+.quiz-progress .correct {
+  color: #06180c;
+  background: #42e37f;
+  border-color: rgba(230, 255, 238, 0.86);
+  box-shadow: 0 0 14px rgba(66, 227, 127, 0.44);
+}
+
+.quiz-progress .wrong {
+  color: #fff;
+  background: #ff2557;
+  border-color: rgba(255, 225, 232, 0.82);
+  box-shadow: 0 0 14px rgba(255, 37, 87, 0.42);
+}
+
 .quiz-question-line,
 .quiz-answer-line {
   position: relative;
@@ -842,6 +865,14 @@ textarea:focus {
   font-weight: 900;
   line-height: 1.2;
   text-shadow: 0 3px 9px rgba(0, 0, 0, 0.74);
+  opacity: 0;
+  transform: translateY(12px);
+  transition:
+    opacity 360ms ease,
+    transform 360ms ease,
+    background 220ms ease,
+    border-color 220ms ease,
+    box-shadow 220ms ease;
 }
 
 .quiz-question-line {
@@ -854,6 +885,50 @@ textarea:focus {
     rgba(34, 34, 42, 0.76);
   text-align: center;
   font-size: clamp(1rem, 1.9vw, 1.8rem);
+}
+
+.quiz-question-line.is-visible,
+.quiz-answer-line.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.quiz-answer-line {
+  cursor: pointer;
+  pointer-events: auto;
+  text-align: left;
+}
+
+.quiz-answer-line:not(.is-visible),
+.quiz-answer-line:disabled {
+  cursor: default;
+}
+
+.quiz-answer-line.selected {
+  border-color: rgba(255, 243, 207, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 22px rgba(255, 255, 255, 0.16);
+}
+
+.quiz-answer-line.correct-answer {
+  border-color: rgba(199, 255, 216, 0.9);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 42%),
+    rgba(34, 155, 82, 0.86);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0 28px rgba(66, 227, 127, 0.42);
+}
+
+.quiz-answer-line.wrong-answer {
+  border-color: rgba(255, 215, 224, 0.9);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 42%),
+    rgba(180, 26, 58, 0.88);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 0 28px rgba(255, 37, 87, 0.4);
 }
 
 .quiz-answer-line::before {
@@ -887,7 +962,90 @@ textarea:focus {
   box-shadow:
     0 0 22px rgba(255, 212, 61, 0.38),
     0 0 32px rgba(255, 255, 255, 0.1);
+  pointer-events: none;
   transform: translate(-50%, -50%);
+}
+
+.confetti-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -18px;
+  width: 10px;
+  height: 18px;
+  border-radius: 2px;
+  opacity: 0.92;
+  animation: confettiFall 2.2s ease-in forwards;
+}
+
+@keyframes confettiFall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -20px, 0) rotate(0deg);
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--drift), 108vh, 0) rotate(720deg);
+  }
+}
+
+.sad-face-feedback {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 31;
+  width: clamp(120px, 16vw, 220px);
+  height: clamp(120px, 16vw, 220px);
+  display: grid;
+  place-items: center;
+  border: 5px solid rgba(255, 255, 255, 0.86);
+  border-radius: 50%;
+  color: #fff;
+  background:
+    radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.2), transparent 26%),
+    rgba(0, 0, 0, 0.86);
+  box-shadow:
+    0 26px 70px rgba(0, 0, 0, 0.52),
+    0 0 35px rgba(255, 37, 87, 0.34);
+  font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+  font-size: clamp(3.2rem, 8vw, 7rem);
+  line-height: 1;
+  pointer-events: none;
+  animation: sadFaceFade 3.1s ease-out forwards;
+  transform: translate(-50%, -50%) scale(0.76);
+}
+
+@keyframes sadFaceFade {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -46%) scale(0.76);
+  }
+
+  14% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  68% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -58%) scale(1.08);
+  }
 }
 
 .waiting-panel,
@@ -950,7 +1108,7 @@ textarea:focus {
   left: 0;
   right: 0;
   bottom: 42px;
-  z-index: 8;
+  z-index: 11;
   display: flex;
   justify-content: space-between;
   gap: 12px;

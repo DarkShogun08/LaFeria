@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>La Feria - Llamadas</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=quiz-audio-2">
 </head>
 <body>
   <main class="screen" id="menuScreen">
@@ -156,10 +156,10 @@
       <div class="call-quiz-frame">
         <div class="quiz-question-line" id="quizQuestionLine"></div>
         <div class="quiz-answer-grid">
-          <div class="quiz-answer-line" data-option="A"></div>
-          <div class="quiz-answer-line" data-option="B"></div>
-          <div class="quiz-answer-line" data-option="C"></div>
-          <div class="quiz-answer-line" data-option="D"></div>
+          <button class="quiz-answer-line" type="button" data-option="A" onclick="selectQuizAnswer('A')" aria-label="Respuesta A"></button>
+          <button class="quiz-answer-line" type="button" data-option="B" onclick="selectQuizAnswer('B')" aria-label="Respuesta B"></button>
+          <button class="quiz-answer-line" type="button" data-option="C" onclick="selectQuizAnswer('C')" aria-label="Respuesta C"></button>
+          <button class="quiz-answer-line" type="button" data-option="D" onclick="selectQuizAnswer('D')" aria-label="Respuesta D"></button>
         </div>
       </div>
 
@@ -224,6 +224,8 @@
 
         <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir</button>
         <audio id="micTestAudio" class="hidden"></audio>
+        <audio id="applauseSound" class="hidden" src="sounds/applause-new.mp3" type="audio/mpeg" preload="auto"></audio>
+        <audio id="failSound" class="hidden" src="sounds/fail-new.mp3" type="audio/mpeg" preload="auto"></audio>
       </aside>
 
       <section class="creator-questions-modal hidden" id="creatorQuestionsModal" aria-label="Panel del creador">
@@ -264,6 +266,6 @@
   </section>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=quiz-audio-7"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>La Feria - Llamadas</title>
-  <link rel="stylesheet" href="styles.css?v=lifelines-6">
+  <link rel="stylesheet" href="styles.css?v=lifelines-7">
 </head>
 <body>
   <main class="screen" id="menuScreen">
@@ -129,8 +129,8 @@
       <div class="call-stage">
         <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">&#9881;</button>
         <div class="creator-lifelines hidden" id="creatorLifelines" aria-label="Comodines del creador">
-          <button class="lifeline-btn" type="button" aria-label="Comodin de llamada" onclick="openPhoneLifeline()">&#9742;</button>
-          <button class="lifeline-btn roulette-lifeline-btn" type="button" aria-label="Comodin de ruleta" onclick="openRouletteLifeline()">
+          <button class="lifeline-btn" id="phoneLifelineBtn" type="button" aria-label="Comodin de llamada" onclick="openPhoneLifeline()">&#9742;</button>
+          <button class="lifeline-btn roulette-lifeline-btn" id="rouletteLifelineBtn" type="button" aria-label="Comodin de ruleta" onclick="openRouletteLifeline()">
             <span class="roulette-lifeline-icon" aria-hidden="true">
               <i>0</i><i>1</i><i>2</i><i>3</i>
             </span>
@@ -243,6 +243,7 @@
       <section class="roulette-modal hidden" id="rouletteLifelineModal" aria-label="Comodin de ruleta">
         <button class="creator-questions-backdrop" type="button" aria-label="Cerrar comodin de ruleta" onclick="closeRouletteLifeline()"></button>
         <div class="roulette-card" role="dialog" aria-modal="true" aria-label="Comodin de ruleta">
+          <button class="roulette-close" type="button" aria-label="Cerrar comodin de ruleta" onclick="closeRouletteLifeline()">&times;</button>
           <div class="roulette-wheel" id="rouletteWheel" aria-live="polite">
             <span style="--angle: 0deg">0</span><span style="--angle: 22.5deg">1</span><span style="--angle: 45deg">2</span><span style="--angle: 67.5deg">1</span>
             <span style="--angle: 90deg">3</span><span style="--angle: 112.5deg">1</span><span style="--angle: 135deg">2</span><span style="--angle: 157.5deg">1</span>
@@ -287,12 +288,12 @@
         <div class="waiting-panel" id="waitingPanel">
           <span>Esperando a la otra persona...</span>
         </div>
-        <div class="person-label">Otra persona</div>
+        <div class="person-label" id="remoteNameLabel">Otra persona</div>
       </section>
     </div>
   </section>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="app.js?v=lifelines-6"></script>
+  <script src="app.js?v=lifelines-7"></script>
 </body>
 </html>

@@ -126,8 +126,12 @@
   </section>
 
   <section class="screen hidden" id="roomScreen">
-    <div class="call-stage">
-      <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">&#9881;</button>
+      <div class="call-stage">
+        <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">&#9881;</button>
+        <div class="creator-question-nav hidden" id="creatorQuestionNav" aria-label="Controles de preguntas del creador">
+          <button class="creator-question-arrow" type="button" aria-label="Pregunta anterior" onclick="showPreviousCreatorQuestion()">&larr;</button>
+          <button class="creator-question-arrow" type="button" aria-label="Pregunta siguiente" onclick="showNextCreatorQuestion()">&rarr;</button>
+        </div>
 
       <div class="call-divider" aria-hidden="true">
         <div class="fair-logo fair-logo-divider">
@@ -150,12 +154,12 @@
       </div>
 
       <div class="call-quiz-frame">
-        <div class="quiz-question-line" aria-hidden="true"></div>
+        <div class="quiz-question-line" id="quizQuestionLine"></div>
         <div class="quiz-answer-grid">
-          <div class="quiz-answer-line" aria-hidden="true"></div>
-          <div class="quiz-answer-line" aria-hidden="true"></div>
-          <div class="quiz-answer-line" aria-hidden="true"></div>
-          <div class="quiz-answer-line" aria-hidden="true"></div>
+          <div class="quiz-answer-line" data-option="A"></div>
+          <div class="quiz-answer-line" data-option="B"></div>
+          <div class="quiz-answer-line" data-option="C"></div>
+          <div class="quiz-answer-line" data-option="D"></div>
         </div>
       </div>
 
@@ -176,6 +180,7 @@
           <label for="manualOfferCode">Codigo de llamada</label>
           <input id="manualOfferCode" class="signal-code room-code-field" readonly>
           <button class="btn btn-primary btn-full btn-sm" type="button" onclick="copyCode('manualOfferCode')">Copiar codigo</button>
+          <button class="btn btn-ghost btn-full btn-sm creator-questions-trigger" id="creatorQuestionsTrigger" type="button" onclick="openCreatorQuestionsPanel()">Panel del creador</button>
         </div>
 
         <div class="settings-room hidden" id="guestPanel">
@@ -220,6 +225,27 @@
         <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir</button>
         <audio id="micTestAudio" class="hidden"></audio>
       </aside>
+
+      <section class="creator-questions-modal hidden" id="creatorQuestionsModal" aria-label="Panel del creador">
+        <button class="creator-questions-backdrop" type="button" aria-label="Cerrar panel del creador" onclick="closeCreatorQuestionsPanel()"></button>
+        <div class="creator-questions-panel" role="dialog" aria-modal="true" aria-labelledby="creatorQuestionsTitle">
+          <div class="creator-questions-header">
+            <div>
+              <span class="settings-kicker">Mesa del presentador</span>
+              <h2 id="creatorQuestionsTitle">Panel del creador</h2>
+            </div>
+            <button class="settings-close" type="button" aria-label="Cerrar panel del creador" onclick="closeCreatorQuestionsPanel()">&times;</button>
+          </div>
+          <p class="creator-questions-note">
+            Prepara las 15 preguntas de esta sala. Se guardan en este navegador y no se envian al invitado todavia.
+          </p>
+          <div class="creator-questions-list" id="creatorQuestionsList"></div>
+          <div class="creator-questions-footer">
+            <span id="creatorQuestionsSaved">Guardado local por sala.</span>
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveCreatorQuestions()">Guardar preguntas</button>
+          </div>
+        </div>
+      </section>
 
       <section class="call-tile local-tile">
         <video id="localVideo" autoplay muted playsinline></video>

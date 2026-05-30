@@ -2,6 +2,9 @@
 // Usa WebRTC con PeerJS para que el codigo compartido sea corto.
 
 const ROOM_CODE_LENGTH = 12;
+const CREATOR_QUESTION_COUNT = 15;
+const CREATOR_QUESTION_OPTIONS = ['A', 'B', 'C', 'D'];
+const CREATOR_QUESTIONS_FALLBACK_KEY = 'laFeria_creator_questions';
 
 const RTC_CONFIG = {
   iceServers: [
@@ -10,10 +13,17 @@ const RTC_CONFIG = {
 };
 
 const state = {
-  profile: localStorage.getItem('la_feria_profile') || '',
+  profile: (() => {
+    try {
+      return window.localStorage?.getItem('la_feria_profile') || '';
+    } catch (err) {
+      return '';
+    }
+  })(),
   role: '',
   peer: null,
   currentCall: null,
+  dataConnection: null,
   localStream: null,
   remoteStream: null,
   selectedAudioDeviceId: '',
@@ -24,6 +34,9 @@ const state = {
   micTestStream: null,
   micEnabled: true,
   camEnabled: true,
+  currentRoomCode: '',
+  creatorQuestions: [],
+  currentQuestionIndex: -1,
 };
 
 function $(id) {
@@ -53,6 +66,294 @@ function setStatus(text, type = 'info') {
   el.textContent = text;
 }
 
+function getLocalStorageItem(key) {
+  try {
+    return window.localStorage?.getItem(key) || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function setLocalStorageItem(key, value) {
+  try {
+    window.localStorage?.setItem(key, value);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+function creatorQuestionsStorageKey() {
+  return state.currentRoomCode
+    ? `${CREATOR_QUESTIONS_FALLBACK_KEY}_${state.currentRoomCode}`
+    : CREATOR_QUESTIONS_FALLBACK_KEY;
+}
+
+function emptyCreatorQuestion() {
+  return {
+    prompt: '',
+    answers: { A: '', B: '', C: '', D: '' },
+    correct: 'A',
+  };
+}
+
+function normalizeCreatorQuestion(raw) {
+  const question = emptyCreatorQuestion();
+  if (!raw || typeof raw !== 'object') return question;
+
+  question.prompt = String(raw.prompt || '');
+  CREATOR_QUESTION_OPTIONS.forEach(option => {
+    question.answers[option] = String(raw.answers?.[option] || '');
+  });
+  question.correct = CREATOR_QUESTION_OPTIONS.includes(raw.correct) ? raw.correct : 'A';
+  return question;
+}
+
+function normalizeCreatorQuestions(raw) {
+  const source = Array.isArray(raw) ? raw : [];
+  return Array.from({ length: CREATOR_QUESTION_COUNT }, (_, index) => normalizeCreatorQuestion(source[index]));
+}
+
+function loadCreatorQuestions() {
+  let saved = null;
+
+  try {
+    saved = JSON.parse(getLocalStorageItem(creatorQuestionsStorageKey()) || 'null');
+  } catch (err) {
+    console.warn('No se pudieron leer las preguntas guardadas.', err);
+  }
+
+  state.creatorQuestions = normalizeCreatorQuestions(saved);
+  renderCreatorQuestions();
+}
+
+function saveCreatorQuestions(silent = false) {
+  if (state.role !== 'creator') return;
+
+  try {
+    const saved = setLocalStorageItem(creatorQuestionsStorageKey(), JSON.stringify(state.creatorQuestions));
+    const savedLabel = $('creatorQuestionsSaved');
+    if (savedLabel) {
+      savedLabel.textContent = saved
+        ? (silent ? 'Guardado automaticamente.' : 'Preguntas guardadas.')
+        : 'No se pudieron guardar las preguntas.';
+    }
+  } catch (err) {
+    const savedLabel = $('creatorQuestionsSaved');
+    if (savedLabel) savedLabel.textContent = 'No se pudieron guardar las preguntas.';
+  }
+}
+
+function renderCreatorQuestions() {
+  const list = $('creatorQuestionsList');
+  if (!list) return;
+
+  list.innerHTML = '';
+  state.creatorQuestions.forEach((question, index) => {
+    const card = document.createElement('article');
+    card.className = 'creator-question-card';
+
+    const title = document.createElement('h3');
+    title.textContent = `Pregunta ${index + 1}`;
+    card.appendChild(title);
+
+    const promptLabel = document.createElement('label');
+    promptLabel.textContent = 'Texto de la pregunta';
+    promptLabel.setAttribute('for', `creatorQuestionPrompt${index}`);
+    card.appendChild(promptLabel);
+
+    const prompt = document.createElement('textarea');
+    prompt.id = `creatorQuestionPrompt${index}`;
+    prompt.rows = 3;
+    prompt.placeholder = 'Escribe aqui la pregunta...';
+    prompt.value = question.prompt;
+    prompt.dataset.questionIndex = String(index);
+    prompt.dataset.field = 'prompt';
+    card.appendChild(prompt);
+
+    const answers = document.createElement('div');
+    answers.className = 'creator-answer-grid';
+
+    CREATOR_QUESTION_OPTIONS.forEach(option => {
+      const answerLabel = document.createElement('label');
+      answerLabel.textContent = `Respuesta ${option}`;
+      answerLabel.setAttribute('for', `creatorQuestion${index}${option}`);
+
+      const answerInput = document.createElement('input');
+      answerInput.id = `creatorQuestion${index}${option}`;
+      answerInput.type = 'text';
+      answerInput.placeholder = `${option}: respuesta`;
+      answerInput.value = question.answers[option];
+      answerInput.dataset.questionIndex = String(index);
+      answerInput.dataset.field = 'answer';
+      answerInput.dataset.option = option;
+
+      const answerField = document.createElement('div');
+      answerField.className = 'creator-answer-field';
+      answerField.append(answerLabel, answerInput);
+      answers.appendChild(answerField);
+    });
+
+    card.appendChild(answers);
+
+    const correctRow = document.createElement('label');
+    correctRow.className = 'creator-correct-row';
+    correctRow.textContent = 'Respuesta correcta';
+
+    const correctSelect = document.createElement('select');
+    correctSelect.dataset.questionIndex = String(index);
+    correctSelect.dataset.field = 'correct';
+    CREATOR_QUESTION_OPTIONS.forEach(option => {
+      const correctOption = document.createElement('option');
+      correctOption.value = option;
+      correctOption.textContent = option;
+      correctSelect.appendChild(correctOption);
+    });
+    correctSelect.value = question.correct;
+    correctRow.appendChild(correctSelect);
+    card.appendChild(correctRow);
+
+    list.appendChild(card);
+  });
+}
+
+function updateCreatorQuestionFromInput(target) {
+  const index = Number(target.dataset.questionIndex);
+  const field = target.dataset.field;
+  if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
+
+  const question = state.creatorQuestions[index] || emptyCreatorQuestion();
+  if (field === 'prompt') {
+    question.prompt = target.value;
+  } else if (field === 'answer') {
+    const option = target.dataset.option;
+    if (CREATOR_QUESTION_OPTIONS.includes(option)) {
+      question.answers[option] = target.value;
+    }
+  } else if (field === 'correct') {
+    question.correct = CREATOR_QUESTION_OPTIONS.includes(target.value) ? target.value : 'A';
+  }
+
+  state.creatorQuestions[index] = question;
+  saveCreatorQuestions(true);
+}
+
+function openCreatorQuestionsPanel() {
+  if (state.role !== 'creator') return;
+
+  loadCreatorQuestions();
+  $('creatorQuestionsModal')?.classList.remove('hidden');
+}
+
+function closeCreatorQuestionsPanel() {
+  $('creatorQuestionsModal')?.classList.add('hidden');
+}
+
+function resetQuizDisplay() {
+  state.currentQuestionIndex = -1;
+  const questionLine = $('quizQuestionLine');
+  if (questionLine) questionLine.textContent = '';
+  document.querySelectorAll('.quiz-answer-line').forEach(line => {
+    line.textContent = '';
+  });
+  document.querySelectorAll('.quiz-progress span').forEach(item => {
+    item.classList.remove('pending');
+    item.classList.add('locked');
+  });
+}
+
+function displayQuizQuestion(index, question) {
+  const safeQuestion = normalizeCreatorQuestion(question);
+  const questionLine = $('quizQuestionLine');
+  if (questionLine) {
+    questionLine.textContent = safeQuestion.prompt || `Pregunta ${index + 1}`;
+  }
+
+  CREATOR_QUESTION_OPTIONS.forEach(option => {
+    const line = document.querySelector(`.quiz-answer-line[data-option="${option}"]`);
+    if (line) line.textContent = `${option}: ${safeQuestion.answers[option] || ''}`;
+  });
+
+  document.querySelectorAll('.quiz-progress span').forEach((item, itemIndex) => {
+    item.classList.toggle('pending', itemIndex === index);
+    item.classList.toggle('locked', itemIndex !== index);
+  });
+}
+
+function sendDataMessage(message) {
+  if (!state.dataConnection?.open) return false;
+  try {
+    state.dataConnection.send(message);
+    return true;
+  } catch (err) {
+    console.warn('No se pudo enviar la pregunta.', err);
+    return false;
+  }
+}
+
+function handleDataMessage(data) {
+  if (!data || data.type !== 'quiz-question') return;
+
+  const index = Number(data.index);
+  if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
+  state.currentQuestionIndex = index;
+  displayQuizQuestion(index, data.question);
+}
+
+function bindDataConnection(connection) {
+  if (!connection) return;
+
+  if (state.dataConnection && state.dataConnection !== connection) {
+    state.dataConnection.close?.();
+  }
+
+  state.dataConnection = connection;
+  connection.on('open', () => {
+    if (state.role === 'creator' && state.currentQuestionIndex >= 0) {
+      sendDataMessage({
+        type: 'quiz-question',
+        index: state.currentQuestionIndex,
+        question: state.creatorQuestions[state.currentQuestionIndex],
+      });
+    }
+  });
+  connection.on('data', handleDataMessage);
+  connection.on('close', () => {
+    if (state.dataConnection === connection) state.dataConnection = null;
+  });
+  connection.on('error', err => {
+    console.warn('Error en el canal de preguntas.', err);
+  });
+}
+
+function showCreatorQuestion(index) {
+  if (state.role !== 'creator') return;
+
+  loadCreatorQuestions();
+  if (index < 0) {
+    setStatus('Ya estas en la primera pregunta.', 'info');
+    return;
+  }
+  if (index >= CREATOR_QUESTION_COUNT) {
+    setStatus('Ya has mostrado las 15 preguntas.', 'info');
+    return;
+  }
+
+  state.currentQuestionIndex = index;
+  const question = state.creatorQuestions[index];
+  displayQuizQuestion(index, question);
+  sendDataMessage({ type: 'quiz-question', index, question });
+  setStatus(`Pregunta ${index + 1} mostrada.`, 'success');
+}
+
+function showPreviousCreatorQuestion() {
+  showCreatorQuestion(state.currentQuestionIndex - 1);
+}
+
+function showNextCreatorQuestion() {
+  showCreatorQuestion(state.currentQuestionIndex + 1);
+}
+
 function updateProfileBadge() {
   const name = state.profile || 'Sin nombre';
   $('profileNameDisplay').textContent = name;
@@ -67,7 +368,7 @@ function saveProfile() {
   }
 
   state.profile = value;
-  localStorage.setItem('la_feria_profile', value);
+  setLocalStorageItem('la_feria_profile', value);
   updateProfileBadge();
   showMsg('profileMsg', 'success', 'Perfil guardado.');
   setTimeout(() => showScreen('menuScreen'), 700);
@@ -483,21 +784,32 @@ function closePeer() {
     state.currentCall.close();
   }
 
+  if (state.dataConnection) {
+    state.dataConnection.close?.();
+  }
+
   if (state.peer) {
     state.peer.destroy();
   }
 
   state.currentCall = null;
+  state.dataConnection = null;
   state.peer = null;
 }
 
 function prepareCallScreen(role) {
   state.role = role;
+  if (role !== 'creator') {
+    state.creatorQuestions = [];
+    closeCreatorQuestionsPanel();
+  }
   $('localNameLabel').textContent = state.profile || 'Tu';
   $('remoteVideo').srcObject = null;
   $('waitingPanel').classList.remove('hidden');
   $('creatorPanel').classList.toggle('hidden', role !== 'creator');
   $('guestPanel').classList.toggle('hidden', role !== 'guest');
+  $('creatorQuestionNav')?.classList.toggle('hidden', role !== 'creator');
+  resetQuizDisplay();
   closeSettingsPanel();
   showScreen('roomScreen');
 }
@@ -512,7 +824,10 @@ async function createManualOffer() {
   try {
     await ensureLocalMedia();
     const code = await createRoomPeer();
+    state.currentRoomCode = code;
+    loadCreatorQuestions();
     state.peer.on('call', answerIncomingCall);
+    state.peer.on('connection', bindDataConnection);
     $('manualOfferCode').value = code;
     $('settingsPanel').classList.remove('hidden');
     setStatus('Codigo listo: copia estos 12 digitos y mandaselos a la otra persona.', 'success');
@@ -533,6 +848,7 @@ async function generateManualAnswer() {
   }
 
   prepareCallScreen('guest');
+  state.currentRoomCode = code;
   setStatus('Entrando con el codigo corto...', 'info');
 
   try {
@@ -548,6 +864,7 @@ async function generateManualAnswer() {
     }
 
     bindCallEvents(call);
+    bindDataConnection(state.peer.connect(code, { reliable: true }));
     setStatus('Llamando al creador. Espera unos segundos...', 'info');
   } catch (err) {
     setStatus(setupErrorMessage(err), 'error');
@@ -703,6 +1020,9 @@ function leaveRoom() {
   state.localStream = null;
   state.remoteStream = null;
   state.role = '';
+  state.currentRoomCode = '';
+  state.creatorQuestions = [];
+  state.currentQuestionIndex = -1;
   state.micEnabled = true;
   state.camEnabled = true;
 
@@ -711,12 +1031,37 @@ function leaveRoom() {
   clearField('manualOfferCode');
   clearField('manualReceivedCode');
   $('camOffMsg').classList.add('hidden');
+  $('creatorQuestionNav')?.classList.add('hidden');
+  resetQuizDisplay();
   closeSettingsPanel();
+  closeCreatorQuestionsPanel();
   showScreen('menuScreen');
 }
 
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') closeSettingsPanel();
+  if (event.key === 'Escape') {
+    closeSettingsPanel();
+    closeCreatorQuestionsPanel();
+  }
+
+  const writingTarget = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName);
+  if (state.role !== 'creator' || writingTarget) return;
+
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    showPreviousCreatorQuestion();
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    showNextCreatorQuestion();
+  }
+});
+
+$('creatorQuestionsList')?.addEventListener('input', event => {
+  updateCreatorQuestionFromInput(event.target);
+});
+
+$('creatorQuestionsList')?.addEventListener('change', event => {
+  updateCreatorQuestionFromInput(event.target);
 });
 
 updateProfileBadge();

@@ -5,6 +5,9 @@ const ROOM_CODE_LENGTH = 12;
 const CREATOR_QUESTION_COUNT = 15;
 const CREATOR_QUESTION_OPTIONS = ['A', 'B', 'C', 'D'];
 const CREATOR_QUESTIONS_FALLBACK_KEY = 'laFeria_creator_questions';
+const ROULETTE_SEGMENTS = [0, 1, 2, 1, 3, 1, 2, 1, 0, 1, 2, 1, 1, 2, 3, 1];
+const ROULETTE_SEGMENT_DEGREES = 360 / ROULETTE_SEGMENTS.length;
+const ROULETTE_SPIN_MS = 3200;
 const SOUNDS = {
   applauseSound: 'sounds/applause-new.mp3',
   failSound: 'sounds/fail-new.mp3',
@@ -52,6 +55,11 @@ const state = {
   quizRevealStep: -1,
   quizSelectedAnswers: Array(CREATOR_QUESTION_COUNT).fill(null),
   quizResults: Array(CREATOR_QUESTION_COUNT).fill(null),
+  quizEliminatedAnswers: Array.from({ length: CREATOR_QUESTION_COUNT }, () => []),
+  phoneTimerRemaining: 50,
+  phoneTimerInterval: null,
+  phoneTimerVisible: false,
+  rouletteSpinning: false,
 };
 
 function $(id) {
@@ -269,6 +277,7 @@ function resetQuizRound() {
   state.quizRevealStep = -1;
   state.quizSelectedAnswers = Array(CREATOR_QUESTION_COUNT).fill(null);
   state.quizResults = Array(CREATOR_QUESTION_COUNT).fill(null);
+  state.quizEliminatedAnswers = Array.from({ length: CREATOR_QUESTION_COUNT }, () => []);
 }
 
 function resetQuizDisplay() {
@@ -279,7 +288,7 @@ function resetQuizDisplay() {
   document.querySelectorAll('.quiz-answer-line').forEach(line => {
     line.textContent = '';
     line.disabled = true;
-    line.classList.remove('is-visible', 'selected', 'correct-answer', 'wrong-answer');
+    line.classList.remove('is-visible', 'selected', 'correct-answer', 'wrong-answer', 'eliminated-answer');
   });
   document.querySelectorAll('.quiz-progress span').forEach(item => {
     item.classList.remove('pending', 'current', 'correct', 'wrong');
@@ -314,9 +323,11 @@ function displayQuizQuestion(index, question, revealStep = state.quizRevealStep)
     const selected = state.quizSelectedAnswers[index] === option;
     const result = state.quizResults[index];
     const visible = revealStep >= optionStep;
+    const eliminated = state.quizEliminatedAnswers[index]?.includes(option);
     line.textContent = `${option}: ${safeQuestion.answers[option] || ''}`;
-    line.disabled = state.role !== 'creator' || !visible || Boolean(state.quizSelectedAnswers[index]);
+    line.disabled = state.role !== 'creator' || !visible || eliminated || Boolean(state.quizSelectedAnswers[index]);
     line.classList.toggle('is-visible', visible);
+    line.classList.toggle('eliminated-answer', eliminated);
     line.classList.toggle('selected', selected);
     line.classList.toggle('correct-answer', selected && result === 'correct');
     line.classList.toggle('wrong-answer', selected && result === 'wrong');
@@ -357,6 +368,25 @@ function handleDataMessage(data) {
     return;
   }
 
+  if (data.type === 'quiz-eliminations') {
+    const index = Number(data.index);
+    if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
+
+    state.quizEliminatedAnswers[index] = Array.isArray(data.eliminated)
+      ? data.eliminated.filter(option => CREATOR_QUESTION_OPTIONS.includes(option))
+      : [];
+
+    if (state.currentQuestionIndex === index) {
+      displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
+    }
+    return;
+  }
+
+  if (data.type === 'phone-lifeline-state') {
+    applyPhoneLifelineState(data);
+    return;
+  }
+
   if (data.type !== 'quiz-question' && data.type !== 'quiz-state') return;
 
   const index = Number(data.index);
@@ -370,6 +400,9 @@ function handleDataMessage(data) {
   }
   if (Array.isArray(data.quizResults)) {
     state.quizResults = data.quizResults.slice(0, CREATOR_QUESTION_COUNT);
+  }
+  if (Array.isArray(data.quizEliminatedAnswers)) {
+    state.quizEliminatedAnswers = normalizeEliminatedAnswers(data.quizEliminatedAnswers);
   }
   displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
 }
@@ -385,6 +418,9 @@ function bindDataConnection(connection) {
   connection.on('open', () => {
     if (state.role === 'creator' && state.currentQuestionIndex >= 0) {
       sendQuizState();
+    }
+    if (state.role === 'creator') {
+      sendPhoneLifelineState();
     }
   });
   connection.on('data', handleDataMessage);
@@ -427,6 +463,14 @@ function sendQuizState() {
     question: state.creatorQuestions[state.currentQuestionIndex],
     quizSelectedAnswers: state.quizSelectedAnswers,
     quizResults: state.quizResults,
+    quizEliminatedAnswers: state.quizEliminatedAnswers,
+  });
+}
+
+function normalizeEliminatedAnswers(value) {
+  return Array.from({ length: CREATOR_QUESTION_COUNT }, (_, index) => {
+    const answers = Array.isArray(value?.[index]) ? value[index] : [];
+    return answers.filter(option => CREATOR_QUESTION_OPTIONS.includes(option));
   });
 }
 
@@ -604,11 +648,233 @@ function playQuizResultEffects(result) {
   }
 }
 
+function updatePhoneTimerDisplay() {
+  const timer = $('phoneTimer');
+  if (timer) timer.textContent = String(state.phoneTimerRemaining).padStart(2, '0');
+
+  const panel = $('phoneLifelinePanel');
+  const viewerOnly = state.role !== 'creator';
+  panel?.classList.toggle('hidden', !state.phoneTimerVisible);
+  panel?.classList.toggle('viewer-only', viewerOnly);
+  $('phoneTimerLabel')?.classList.toggle('hidden', viewerOnly);
+  $('phoneControls')?.classList.toggle('hidden', viewerOnly);
+
+  const startButton = $('phoneStartBtn');
+  if (startButton) startButton.disabled = Boolean(state.phoneTimerInterval) || state.phoneTimerRemaining <= 0;
+
+  const pauseButton = $('phonePauseBtn');
+  if (pauseButton) pauseButton.disabled = !state.phoneTimerInterval;
+
+  const finishButton = $('phoneFinishBtn');
+  if (finishButton) finishButton.disabled = state.phoneTimerRemaining <= 0;
+}
+
+function sendPhoneLifelineState() {
+  if (state.role !== 'creator') return;
+
+  sendDataMessage({
+    type: 'phone-lifeline-state',
+    visible: state.phoneTimerVisible,
+    remaining: state.phoneTimerRemaining,
+    running: Boolean(state.phoneTimerInterval),
+  });
+}
+
+function stopPhoneTimerInterval() {
+  if (state.phoneTimerInterval) {
+    clearInterval(state.phoneTimerInterval);
+  }
+  state.phoneTimerInterval = null;
+}
+
+function applyPhoneLifelineState(data) {
+  if (state.role === 'creator') return;
+
+  state.phoneTimerVisible = Boolean(data.visible);
+  state.phoneTimerRemaining = Number.isFinite(Number(data.remaining))
+    ? Math.max(0, Math.min(50, Math.round(Number(data.remaining))))
+    : 50;
+  stopPhoneTimerInterval();
+  updatePhoneTimerDisplay();
+}
+
+function openPhoneLifeline() {
+  if (state.role !== 'creator') return;
+  if (state.phoneTimerVisible) {
+    closePhoneLifeline();
+    return;
+  }
+
+  if (state.phoneTimerRemaining <= 0) state.phoneTimerRemaining = 50;
+  state.phoneTimerVisible = true;
+  updatePhoneTimerDisplay();
+  sendPhoneLifelineState();
+}
+
+function closePhoneLifeline() {
+  if (state.role !== 'creator') return;
+
+  stopPhoneTimerInterval();
+  state.phoneTimerVisible = false;
+  updatePhoneTimerDisplay();
+  sendPhoneLifelineState();
+}
+
+function startPhoneLifeline() {
+  if (state.role !== 'creator' || state.phoneTimerInterval) return;
+  if (state.phoneTimerRemaining <= 0) state.phoneTimerRemaining = 50;
+  state.phoneTimerVisible = true;
+
+  state.phoneTimerInterval = setInterval(() => {
+    state.phoneTimerRemaining = Math.max(0, state.phoneTimerRemaining - 1);
+    updatePhoneTimerDisplay();
+    sendPhoneLifelineState();
+
+    if (state.phoneTimerRemaining <= 0) {
+      stopPhoneTimerInterval();
+      updatePhoneTimerDisplay();
+      sendPhoneLifelineState();
+    }
+  }, 1000);
+
+  updatePhoneTimerDisplay();
+  sendPhoneLifelineState();
+}
+
+function pausePhoneLifeline() {
+  if (state.role !== 'creator') return;
+
+  stopPhoneTimerInterval();
+  state.phoneTimerVisible = true;
+  updatePhoneTimerDisplay();
+  sendPhoneLifelineState();
+}
+
+function finishPhoneLifeline() {
+  if (state.role !== 'creator') return;
+
+  stopPhoneTimerInterval();
+  state.phoneTimerVisible = true;
+  state.phoneTimerRemaining = 0;
+  updatePhoneTimerDisplay();
+  sendPhoneLifelineState();
+}
+
+function resetPhoneLifeline() {
+  stopPhoneTimerInterval();
+  state.phoneTimerRemaining = 50;
+  state.phoneTimerVisible = false;
+  updatePhoneTimerDisplay();
+}
+
+function openRouletteLifeline() {
+  if (state.role !== 'creator') return;
+  const modal = $('rouletteLifelineModal');
+  if (modal && !modal.classList.contains('hidden')) {
+    closeRouletteLifeline();
+    return;
+  }
+
+  modal?.classList.remove('hidden');
+  const result = $('rouletteResult');
+  if (result) result.textContent = '?';
+  const copy = $('rouletteCopy');
+  if (copy) copy.textContent = 'Gira para eliminar respuestas incorrectas visibles.';
+}
+
+function closeRouletteLifeline(force = false) {
+  if (state.rouletteSpinning && !force) return;
+  $('rouletteLifelineModal')?.classList.add('hidden');
+}
+
+function weightedRouletteResult() {
+  const roll = Math.random();
+  if (roll < 0.1) return 0;
+  if (roll < 0.65) return 1;
+  if (roll < 0.95) return 2;
+  return 3;
+}
+
+function pickRouletteSegment(result) {
+  const matchingSegments = ROULETTE_SEGMENTS
+    .map((value, index) => value === result ? index : -1)
+    .filter(index => index >= 0);
+
+  return matchingSegments[Math.floor(Math.random() * matchingSegments.length)] ?? 0;
+}
+
+function spinRouletteLifeline() {
+  if (state.role !== 'creator' || state.rouletteSpinning) return;
+  if (state.currentQuestionIndex < 0) {
+    const copy = $('rouletteCopy');
+    if (copy) copy.textContent = 'Primero muestra una pregunta.';
+    return;
+  }
+
+  state.rouletteSpinning = true;
+  const wheel = $('rouletteWheel');
+  const resultLabel = $('rouletteResult');
+  const spinButton = $('rouletteSpinBtn');
+  const result = weightedRouletteResult();
+  const segmentIndex = pickRouletteSegment(result);
+  const segmentAngle = segmentIndex * ROULETTE_SEGMENT_DEGREES;
+  const targetDegrees = (7 * 360) + ((360 - segmentAngle) % 360);
+
+  wheel?.classList.remove('is-spinning');
+  if (wheel) wheel.style.transform = 'rotate(0deg)';
+  void wheel?.offsetWidth;
+  wheel?.style.setProperty('--roulette-spin', `${targetDegrees}deg`);
+  wheel?.classList.add('is-spinning');
+  if (resultLabel) resultLabel.textContent = '?';
+  if (spinButton) spinButton.disabled = true;
+
+  setTimeout(() => {
+    state.rouletteSpinning = false;
+    wheel?.classList.remove('is-spinning');
+    wheel?.style.setProperty('transform', `rotate(${targetDegrees}deg)`);
+    if (resultLabel) resultLabel.textContent = String(result);
+    if (spinButton) spinButton.disabled = false;
+    applyRouletteElimination(result);
+  }, ROULETTE_SPIN_MS);
+}
+
+function applyRouletteElimination(count) {
+  const index = state.currentQuestionIndex;
+  const question = normalizeCreatorQuestion(state.creatorQuestions[index]);
+  const alreadyEliminated = state.quizEliminatedAnswers[index] || [];
+  const candidates = CREATOR_QUESTION_OPTIONS
+    .filter(option => option !== question.correct)
+    .filter(option => state.quizRevealStep >= CREATOR_QUESTION_OPTIONS.indexOf(option) + 1)
+    .filter(option => !alreadyEliminated.includes(option));
+
+  const shuffled = candidates
+    .map(option => ({ option, sort: Math.random() }))
+    .sort((a, b) => a.sort - b.sort)
+    .map(item => item.option);
+  const eliminatedNow = shuffled.slice(0, Math.max(0, count));
+  state.quizEliminatedAnswers[index] = [...alreadyEliminated, ...eliminatedNow];
+
+  displayQuizQuestion(index, question, state.quizRevealStep);
+  sendDataMessage({
+    type: 'quiz-eliminations',
+    index,
+    eliminated: state.quizEliminatedAnswers[index],
+  });
+
+  const copy = $('rouletteCopy');
+  if (copy) {
+    copy.textContent = count === 0
+      ? 'Resultado 0: no se elimina ninguna respuesta.'
+      : `Resultado ${count}: eliminadas ${eliminatedNow.length} respuesta(s) incorrecta(s).`;
+  }
+}
+
 function selectQuizAnswer(option) {
   if (state.role !== 'creator') return;
   if (state.currentQuestionIndex < 0) return;
   if (!CREATOR_QUESTION_OPTIONS.includes(option)) return;
   if (state.quizRevealStep < CREATOR_QUESTION_OPTIONS.indexOf(option) + 1) return;
+  if (state.quizEliminatedAnswers[state.currentQuestionIndex]?.includes(option)) return;
   if (state.quizSelectedAnswers[state.currentQuestionIndex]) return;
 
   const question = normalizeCreatorQuestion(state.creatorQuestions[state.currentQuestionIndex]);
@@ -652,7 +918,7 @@ function launchConfetti() {
 function launchSadFace() {
   const face = document.createElement('div');
   face.className = 'sad-face-feedback';
-  face.textContent = '😢';
+  face.textContent = '\u{1F622}';
   document.body.appendChild(face);
   setTimeout(() => face.remove(), 3200);
 }
@@ -1164,6 +1430,11 @@ function prepareCallScreen(role) {
   $('creatorPanel').classList.toggle('hidden', role !== 'creator');
   $('guestPanel').classList.toggle('hidden', role !== 'guest');
   $('creatorQuestionNav')?.classList.toggle('hidden', role !== 'creator');
+  $('creatorLifelines')?.classList.toggle('hidden', role !== 'creator');
+  resetPhoneLifeline();
+  if (role !== 'creator') {
+    closeRouletteLifeline(true);
+  }
   resetQuizDisplay();
   closeSettingsPanel();
   showScreen('roomScreen');
@@ -1406,6 +1677,7 @@ function leaveRoom() {
   state.currentRoomCode = '';
   state.creatorQuestions = [];
   state.currentQuestionIndex = -1;
+  state.quizEliminatedAnswers = Array.from({ length: CREATOR_QUESTION_COUNT }, () => []);
   state.micEnabled = true;
   state.camEnabled = true;
 
@@ -1415,6 +1687,9 @@ function leaveRoom() {
   clearField('manualReceivedCode');
   $('camOffMsg').classList.add('hidden');
   $('creatorQuestionNav')?.classList.add('hidden');
+  $('creatorLifelines')?.classList.add('hidden');
+  resetPhoneLifeline();
+  closeRouletteLifeline(true);
   resetQuizDisplay();
   closeSettingsPanel();
   closeCreatorQuestionsPanel();

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>La Feria - Llamadas</title>
-  <link rel="stylesheet" href="styles.css?v=lifelines-12">
+  <link rel="stylesheet" href="styles.css?v=lifelines-20">
 </head>
 <body>
   <main class="screen" id="menuScreen">
@@ -128,12 +128,22 @@
   <section class="screen hidden" id="roomScreen">
       <div class="call-stage">
         <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">&#9881;</button>
+        <div class="participant-away-alert hidden" id="participantAwayAlert">¡El participante esta en otra pestaña!</div>
         <div class="creator-lifelines hidden" id="creatorLifelines" aria-label="Comodines del creador">
+          <button class="lifeline-btn reverse-lifeline-btn" id="reverseLifelineBtn" type="button" aria-label="Comodin reversa" onclick="openReverseLifeline()">
+            <img src="images/Uno%20reverse%20clean.png" alt="">
+          </button>
           <button class="lifeline-btn" id="phoneLifelineBtn" type="button" aria-label="Comodin de llamada" onclick="openPhoneLifeline()">&#9742;</button>
           <button class="lifeline-btn roulette-lifeline-btn" id="rouletteLifelineBtn" type="button" aria-label="Comodin de ruleta" onclick="openRouletteLifeline()">
             <span class="roulette-lifeline-icon" aria-hidden="true">
               <i>0</i><i>1</i><i>2</i><i>3</i>
             </span>
+          </button>
+          <button class="lifeline-btn shield-lifeline-btn" id="shieldLifelineBtn" type="button" aria-label="Comodin del escudo" onclick="openShieldLifeline()">
+            <img src="images/Escudo.png" alt="">
+          </button>
+          <button class="lifeline-btn angel-lifeline-btn" id="angelLifelineBtn" type="button" aria-label="Comodin angelical" onclick="openAngelLifeline()">
+            <span class="angel-lifeline-icon" aria-hidden="true"></span>
           </button>
         </div>
         <div class="creator-question-nav hidden" id="creatorQuestionNav" aria-label="Controles de preguntas del creador">
@@ -220,6 +230,22 @@
           </button>
 
           <button class="btn btn-primary btn-full" id="btnMicTest" type="button" onclick="toggleMicTest()">Prueba de microfono</button>
+
+          <div class="settings-volume">
+            <label for="effectsVolumeSlider">
+              <span>Volumen efectos</span>
+              <strong id="effectsVolumeValue">100%</strong>
+            </label>
+            <input id="effectsVolumeSlider" type="range" min="0" max="100" value="100" oninput="changeEffectsVolume()">
+          </div>
+
+          <div class="settings-volume">
+            <label for="remoteVoiceVolumeSlider">
+              <span>Voz de la otra persona</span>
+              <strong id="remoteVoiceVolumeValue">100%</strong>
+            </label>
+            <input id="remoteVoiceVolumeSlider" type="range" min="0" max="100" value="100" oninput="changeRemoteVoiceVolume()">
+          </div>
         </div>
 
         <button class="btn btn-danger btn-full" type="button" onclick="leaveRoom()">Salir</button>
@@ -253,6 +279,69 @@
           </div>
           <p class="roulette-copy" id="rouletteCopy">Gira para eliminar respuestas incorrectas visibles.</p>
           <button class="btn btn-primary btn-full btn-sm" id="rouletteSpinBtn" type="button" onclick="spinRouletteLifeline()">Girar</button>
+        </div>
+      </section>
+
+      <section class="creator-questions-modal hidden lifeline-choice-modal" id="angelLifelineModal" aria-label="Comodin angelical">
+        <button class="creator-questions-backdrop" type="button" aria-label="Cerrar comodin angelical" onclick="closeAngelLifelinePanel()"></button>
+        <div class="creator-questions-panel lifeline-choice-panel" role="dialog" aria-modal="true" aria-labelledby="angelLifelineTitle">
+          <div class="creator-questions-header">
+            <div>
+              <span class="settings-kicker">Comodin angelical</span>
+              <h2 id="angelLifelineTitle">Revivir comodin</h2>
+            </div>
+            <button class="settings-close" type="button" aria-label="Cerrar comodin angelical" onclick="closeAngelLifelinePanel()">&times;</button>
+          </div>
+          <p class="creator-questions-note">Elige un comodin usado para volver a activarlo.</p>
+          <div class="lifeline-choice-grid" id="angelReviveOptions"></div>
+        </div>
+      </section>
+
+      <section class="creator-questions-modal hidden reverse-editor-modal" id="reverseEditorModal" aria-label="Editor de reversa">
+        <button class="creator-questions-backdrop" type="button" aria-label="Cerrar editor de reversa" onclick="closeReverseEditorPanel()"></button>
+        <div class="creator-questions-panel reverse-editor-panel" role="dialog" aria-modal="true" aria-labelledby="reverseEditorTitle">
+          <div class="creator-questions-header">
+            <div>
+              <span class="settings-kicker">Carta reversa</span>
+              <h2 id="reverseEditorTitle">Cambiar pregunta</h2>
+            </div>
+            <button class="settings-close" type="button" aria-label="Cerrar editor de reversa" onclick="closeReverseEditorPanel()">&times;</button>
+          </div>
+          <div class="creator-question-card reverse-question-card">
+            <label>Texto de la pregunta
+              <textarea id="reversePromptInput" rows="2"></textarea>
+            </label>
+            <div class="creator-answer-grid">
+              <label>A
+                <input id="reverseAnswerA">
+              </label>
+              <label>B
+                <input id="reverseAnswerB">
+              </label>
+              <label>C
+                <input id="reverseAnswerC">
+              </label>
+              <label>D
+                <input id="reverseAnswerD">
+              </label>
+            </div>
+            <label class="creator-correct-row">Correcta
+              <select id="reverseCorrectSelect">
+                <option value="A">A</option>
+                <option value="B">B</option>
+                <option value="C">C</option>
+                <option value="D">D</option>
+              </select>
+            </label>
+            <label class="creator-check-row">
+              <input id="reverseFairQuestion" type="checkbox">
+              <span>Pregunta Feria</span>
+            </label>
+          </div>
+          <div class="creator-questions-footer">
+            <span>Esta pregunta sustituye la pregunta actual.</span>
+            <button class="btn btn-primary btn-sm" type="button" onclick="useReverseQuestion()">Usar reversa</button>
+          </div>
         </div>
       </section>
 
@@ -298,6 +387,6 @@
   </section>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="app.js?v=lifelines-12"></script>
+  <script src="app.js?v=lifelines-20"></script>
 </body>
 </html>

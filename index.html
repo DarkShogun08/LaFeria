@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>La Feria - Llamadas</title>
-  <link rel="stylesheet" href="styles.css?v=lifelines-31">
+  <link rel="stylesheet" href="styles.css?v=lifelines-32">
 </head>
 <body>
   <main class="screen" id="menuScreen">
@@ -312,7 +312,7 @@
               <span class="settings-kicker">Juego del maletin</span>
               <h2 id="briefcaseTitle">Maletin -3</h2>
             </div>
-            <button class="settings-close" type="button" aria-label="Cerrar comodin del maletin" onclick="closeBriefcasePanel()">&times;</button>
+            <button class="settings-close" id="briefcaseCloseBtn" type="button" aria-label="Cerrar comodin del maletin" onclick="closeBriefcasePanel()">&times;</button>
           </div>
           <div class="briefcase-info" id="briefcaseInfo">
             <div class="briefcase-mark">-3</div>
@@ -326,6 +326,7 @@
           <div class="briefcase-creator-controls hidden" id="briefcaseCreatorControls">
             <strong class="briefcase-creator-timer" id="briefcaseCreatorTimer">60s</strong>
             <button class="btn btn-primary btn-sm" id="briefcaseChangeBtn" type="button" onclick="changeBriefcaseOwner()">Cambiar maletin</button>
+            <button class="btn btn-secondary btn-sm" id="briefcaseKeepBtn" type="button" onclick="keepBriefcaseNow()">Quedarse con el maletin</button>
             <span>Cambia los maletines durante 60 segundos. Si al final el creador no tiene el -3, el invitado gana.</span>
           </div>
         </div>
@@ -373,6 +374,6 @@
   </section>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="app.js?v=lifelines-31"></script>
+  <script src="app.js?v=lifelines-32"></script>
 </body>
 </html>

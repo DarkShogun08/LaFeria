@@ -138,6 +138,7 @@ const state = {
   briefcaseAudio: null,
   briefcaseQuestionIndex: null,
   briefcaseStatus: '',
+  briefcaseGoodOwner: '',
   participantAway: false,
   creatorQuestionsSaveTimeout: null,
   creatorQuestionsLoadedKey: '',
@@ -1571,6 +1572,7 @@ function sendBriefcaseLifelineState(extra = {}) {
     active: state.briefcaseActive,
     remaining: state.briefcaseRemaining,
     status: state.briefcaseStatus,
+    goodOwner: state.briefcaseGoodOwner,
     ...extra,
   });
 }
@@ -1581,6 +1583,7 @@ function applyBriefcaseLifelineState(data) {
   if ('active' in data) state.briefcaseActive = Boolean(data.active);
   if ('remaining' in data) state.briefcaseRemaining = Math.max(0, Math.min(BRIEFCASE_HOLD_SECONDS, Math.round(Number(data.remaining) || 0)));
   if ('status' in data) state.briefcaseStatus = String(data.status || '');
+  if ('goodOwner' in data) state.briefcaseGoodOwner = String(data.goodOwner || '');
   if (state.briefcaseStatus === 'choice' || state.briefcaseActive) ensureBriefcaseMusic();
   if (state.briefcaseStatus === 'lost' || state.briefcaseStatus === 'success') stopBriefcaseMusic();
   updateBriefcasePanel();
@@ -1606,13 +1609,21 @@ function updateBriefcasePanel() {
   if (creatorTimer) creatorTimer.textContent = timerText;
   const status = $('briefcaseStatus');
   if (status) {
-    status.textContent = state.briefcaseStatus === 'lost'
-      ? 'El maletin no tenia -3. Comodin perdido.'
-      : state.briefcaseStatus === 'success'
-        ? 'Maletin completado: se quitaron las 3 respuestas incorrectas.'
-        : state.briefcaseActive
-          ? 'El invitado tiene el maletin -3.'
-          : 'Esperando decision del invitado.';
+    if (state.briefcaseStatus === 'lost') {
+      status.textContent = 'El invitado perdio el maletin.';
+    } else if (state.briefcaseStatus === 'success') {
+      status.textContent = 'El invitado gano el maletin: se quitaron las 3 respuestas incorrectas.';
+    } else if (state.briefcaseActive && state.role === 'guest') {
+      status.textContent = state.briefcaseGoodOwner === 'guest'
+        ? 'Tienes el maletin -3.'
+        : 'Tienes el maletin 0. El creador tiene el -3.';
+    } else if (state.briefcaseActive) {
+      status.textContent = 'Maletines en juego. No sabes quien tiene el -3.';
+    } else {
+      status.textContent = state.role === 'guest'
+        ? 'Elige que maletin quieres quedarte.'
+        : 'Esperando decision del invitado.';
+    }
   }
 }
 
@@ -1622,6 +1633,7 @@ function openBriefcaseChoicePanel() {
   state.briefcaseStatus = 'choice';
   state.briefcaseActive = false;
   state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
+  state.briefcaseGoodOwner = '';
   updateBriefcasePanel();
 }
 
@@ -1642,6 +1654,7 @@ function openBriefcaseLifeline() {
   state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
   state.briefcaseQuestionIndex = state.currentQuestionIndex >= 0 ? state.currentQuestionIndex : null;
   state.briefcaseStatus = 'choice';
+  state.briefcaseGoodOwner = '';
   stopBriefcaseTimer();
   updateBriefcasePanel();
   updateLifelineButtonState();
@@ -1655,35 +1668,28 @@ function closeBriefcasePanel() {
 
 function chooseBriefcase(choice) {
   if (state.role !== 'guest') return;
+  if (choice !== 'minus3' && choice !== 'zero') return;
   state.briefcaseLifelineUsed = true;
+  state.briefcaseGoodOwner = choice === 'minus3' ? 'guest' : 'creator';
+  state.briefcaseStatus = 'active';
+  state.briefcaseActive = true;
+  state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
   sendDataMessage({ type: 'briefcase-choice', choice });
-  state.briefcaseStatus = choice === 'have' ? 'active' : 'lost';
-  state.briefcaseActive = choice === 'have';
-  if (choice === 'have') ensureBriefcaseMusic();
-  else {
-    stopBriefcaseMusic();
-    showBriefcaseResult('lost');
-  }
+  ensureBriefcaseMusic();
   updateBriefcasePanel();
 }
 
 function handleBriefcaseChoice(choice) {
   if (state.role !== 'creator') return;
+  const goodOwner = choice === 'minus3'
+    ? 'guest'
+    : choice === 'zero'
+      ? 'creator'
+      : '';
+  if (!goodOwner) return;
   state.briefcaseLifelineUsed = true;
   stopBriefcaseTimer();
-  if (choice !== 'have') {
-    stopBriefcaseMusic();
-    state.briefcaseActive = false;
-    state.briefcaseStatus = 'lost';
-    state.briefcaseRemaining = 0;
-    updateBriefcasePanel();
-    updateLifelineButtonState();
-    sendBriefcaseLifelineState();
-    showBriefcaseResult('lost');
-    sendDataMessage({ type: 'briefcase-result', result: 'lost' });
-    syncQuestionMusic();
-    return;
-  }
+  state.briefcaseGoodOwner = goodOwner;
   state.briefcaseActive = true;
   state.briefcaseStatus = 'active';
   state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
@@ -1701,13 +1707,8 @@ function handleBriefcaseChoice(choice) {
 
 function changeBriefcaseOwner() {
   if (state.role !== 'creator' || !state.briefcaseActive) return;
-  playBriefcaseMusic();
-  stopBriefcaseTimer();
-  state.briefcaseActive = false;
-  state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
-  state.briefcaseStatus = 'choice';
+  state.briefcaseGoodOwner = state.briefcaseGoodOwner === 'guest' ? 'creator' : 'guest';
   updateBriefcasePanel();
-  sendDataMessage({ type: 'briefcase-open' });
   sendBriefcaseLifelineState();
 }
 
@@ -1715,8 +1716,9 @@ function completeBriefcaseLifeline() {
   if (state.role !== 'creator') return;
   stopBriefcaseTimer();
   stopBriefcaseMusic();
+  const guestWins = state.briefcaseGoodOwner !== 'creator';
   const index = state.currentQuestionIndex >= 0 ? state.currentQuestionIndex : state.briefcaseQuestionIndex;
-  if (Number.isInteger(index) && index >= 0 && index < CREATOR_QUESTION_COUNT) {
+  if (guestWins && Number.isInteger(index) && index >= 0 && index < CREATOR_QUESTION_COUNT) {
     const question = normalizeCreatorQuestion(state.creatorQuestions[index]);
     state.quizRevealStep = 4;
     state.quizEliminatedAnswers[index] = CREATOR_QUESTION_OPTIONS.filter(option => option !== question.correct);
@@ -1726,13 +1728,13 @@ function completeBriefcaseLifeline() {
     sendQuizState();
   }
   state.briefcaseActive = false;
-  state.briefcaseStatus = 'success';
+  state.briefcaseStatus = guestWins ? 'success' : 'lost';
   state.briefcaseRemaining = 0;
   updateBriefcasePanel();
   updateLifelineButtonState();
   sendBriefcaseLifelineState();
-  showBriefcaseResult('success');
-  sendDataMessage({ type: 'briefcase-result', result: 'success' });
+  showBriefcaseResult(guestWins ? 'success' : 'lost');
+  sendDataMessage({ type: 'briefcase-result', result: guestWins ? 'success' : 'lost' });
   syncQuestionMusic();
 }
 
@@ -1744,6 +1746,7 @@ function resetBriefcaseLifeline() {
   state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
   state.briefcaseQuestionIndex = null;
   state.briefcaseStatus = '';
+  state.briefcaseGoodOwner = '';
   closeBriefcasePanel();
   updateLifelineButtonState();
 }
@@ -2056,7 +2059,12 @@ function showBriefcaseResult(result) {
   layer.className = `briefcase-result-layer ${result === 'success' ? 'success' : 'lost'}`;
   const text = document.createElement('strong');
   text.textContent = result === 'success' ? '-3 PREGUNTAS!' : 'Has perdido :(';
+  const detail = document.createElement('span');
+  detail.textContent = result === 'success'
+    ? 'El invitado gano el maletin.'
+    : 'El invitado perdio el maletin.';
   layer.appendChild(text);
+  layer.appendChild(detail);
   document.body.appendChild(layer);
   setTimeout(() => layer.remove(), BRIEFCASE_RESULT_ANIMATION_MS);
 }

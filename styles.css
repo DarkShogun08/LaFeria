@@ -2582,6 +2582,20 @@ textarea:focus {
   font-weight: 900;
 }
 
+.briefcase-info p.briefcase-status-good {
+  color: #62ff91;
+  text-shadow: 0 0 12px rgba(66, 227, 127, 0.42);
+}
+
+.briefcase-info p.briefcase-status-bad {
+  color: #ff5b5b;
+  text-shadow: 0 0 12px rgba(255, 37, 87, 0.42);
+}
+
+.briefcase-info p.briefcase-status-neutral {
+  color: #fff;
+}
+
 .briefcase-info strong {
   color: var(--yellow);
   font-size: 2rem;

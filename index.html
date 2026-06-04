@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>La Feria - Llamadas</title>
-  <link rel="stylesheet" href="styles.css?v=lifelines-26">
+  <link rel="stylesheet" href="styles.css?v=lifelines-30">
 </head>
 <body>
   <main class="screen" id="menuScreen">
@@ -130,8 +130,8 @@
         <button class="settings-fab" id="settingsToggle" type="button" aria-label="Abrir configuracion" onclick="toggleSettingsPanel()">&#9881;</button>
         <div class="participant-away-alert hidden" id="participantAwayAlert">¡El participante esta en otra pestaña!</div>
         <div class="creator-lifelines hidden" id="creatorLifelines" aria-label="Comodines del creador">
-          <button class="lifeline-btn reverse-lifeline-btn" id="reverseLifelineBtn" type="button" aria-label="Comodin reversa" onclick="openReverseLifeline()">
-            <img src="images/Uno%20reverse%20clean.png" alt="">
+          <button class="lifeline-btn briefcase-lifeline-btn" id="briefcaseLifelineBtn" type="button" aria-label="Comodin del maletin" onclick="openBriefcaseLifeline()">
+            <span class="briefcase-lifeline-icon" aria-hidden="true">-3</span>
           </button>
           <button class="lifeline-btn" id="phoneLifelineBtn" type="button" aria-label="Comodin de llamada" onclick="openPhoneLifeline()">&#9742;</button>
           <button class="lifeline-btn roulette-lifeline-btn" id="rouletteLifelineBtn" type="button" aria-label="Comodin de ruleta" onclick="openRouletteLifeline()">
@@ -305,50 +305,28 @@
         </div>
       </section>
 
-      <section class="creator-questions-modal hidden reverse-editor-modal" id="reverseEditorModal" aria-label="Editor de reversa">
-        <button class="creator-questions-backdrop" type="button" aria-label="Cerrar editor de reversa" onclick="closeReverseEditorPanel()"></button>
-        <div class="creator-questions-panel reverse-editor-panel" role="dialog" aria-modal="true" aria-labelledby="reverseEditorTitle">
+      <section class="creator-questions-modal hidden briefcase-modal" id="briefcaseLifelineModal" aria-label="Comodin del maletin">
+        <div class="creator-questions-panel briefcase-panel" role="dialog" aria-modal="true" aria-labelledby="briefcaseTitle">
           <div class="creator-questions-header">
             <div>
-              <span class="settings-kicker">Carta reversa</span>
-              <h2 id="reverseEditorTitle">Cambiar pregunta</h2>
+              <span class="settings-kicker">Juego del maletin</span>
+              <h2 id="briefcaseTitle">Maletin -3</h2>
             </div>
-            <button class="settings-close" type="button" aria-label="Cerrar editor de reversa" onclick="closeReverseEditorPanel()">&times;</button>
+            <button class="settings-close" type="button" aria-label="Cerrar comodin del maletin" onclick="closeBriefcasePanel()">&times;</button>
           </div>
-          <div class="creator-question-card reverse-question-card">
-            <label>Texto de la pregunta
-              <textarea id="reversePromptInput" rows="2"></textarea>
-            </label>
-            <div class="creator-answer-grid">
-              <label>A
-                <input id="reverseAnswerA">
-              </label>
-              <label>B
-                <input id="reverseAnswerB">
-              </label>
-              <label>C
-                <input id="reverseAnswerC">
-              </label>
-              <label>D
-                <input id="reverseAnswerD">
-              </label>
-            </div>
-            <label class="creator-correct-row">Correcta
-              <select id="reverseCorrectSelect">
-                <option value="A">A</option>
-                <option value="B">B</option>
-                <option value="C">C</option>
-                <option value="D">D</option>
-              </select>
-            </label>
-            <label class="creator-check-row">
-              <input id="reverseFairQuestion" type="checkbox">
-              <span>Pregunta Feria</span>
-            </label>
+          <div class="briefcase-info" id="briefcaseInfo">
+            <div class="briefcase-mark">-3</div>
+            <p id="briefcaseStatus">Esperando decision del invitado.</p>
+            <strong id="briefcaseTimer">60s</strong>
           </div>
-          <div class="creator-questions-footer">
-            <span>Esta pregunta sustituye la pregunta actual.</span>
-            <button class="btn btn-primary btn-sm" type="button" onclick="useReverseQuestion()">Usar reversa</button>
+          <div class="briefcase-choice-grid" id="briefcaseGuestChoices">
+            <button class="briefcase-choice have" type="button" onclick="chooseBriefcase('have')">Tenerlo</button>
+            <button class="briefcase-choice not-have" type="button" onclick="chooseBriefcase('not-have')">No tenerlo</button>
+          </div>
+          <div class="briefcase-creator-controls hidden" id="briefcaseCreatorControls">
+            <strong class="briefcase-creator-timer" id="briefcaseCreatorTimer">60s</strong>
+            <button class="btn btn-primary btn-sm" id="briefcaseChangeBtn" type="button" onclick="changeBriefcaseOwner()">Cambiar maletin</button>
+            <span>Si el invitado mantiene el -3 durante 60 segundos, se eliminan las 3 respuestas incorrectas.</span>
           </div>
         </div>
       </section>
@@ -395,6 +373,6 @@
   </section>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="app.js?v=lifelines-26"></script>
+  <script src="app.js?v=lifelines-30"></script>
 </body>
 </html>

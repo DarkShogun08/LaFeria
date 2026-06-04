@@ -1573,87 +1573,56 @@ textarea:focus {
   filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.35));
 }
 
-.reverse-lifeline-btn {
+.briefcase-lifeline-btn {
   position: relative;
-  padding: 4px;
-  overflow: hidden;
-}
-
-.reverse-lifeline-btn img {
-  position: relative;
-  z-index: 1;
-  width: 68%;
-  height: 84%;
-  display: block;
-  object-fit: contain;
-  border-radius: 6px;
-  transform: translateY(0);
-}
-
-.reverse-lifeline-btn.is-locked::before {
-  content: "";
-  position: absolute;
-  inset: 5px 7px;
-  z-index: 2;
-  border-radius: 10px;
+  color: #fff;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.34), transparent 28%, transparent 72%, rgba(255, 255, 255, 0.22)),
-    repeating-linear-gradient(
-      90deg,
-      transparent 0 7px,
-      rgba(14, 15, 20, 0.78) 7px 10px,
-      transparent 10px 17px
-    );
-  border: 3px solid rgba(14, 15, 20, 0.86);
-  box-shadow:
-    inset 0 5px 0 rgba(14, 15, 20, 0.82),
-    inset 0 -5px 0 rgba(14, 15, 20, 0.82),
-    inset 0 0 0 1px rgba(255, 243, 207, 0.24),
-    0 0 0 1px rgba(255, 243, 207, 0.2);
+    radial-gradient(circle at 35% 22%, rgba(255, 255, 255, 0.32), transparent 26%),
+    linear-gradient(135deg, #332010, #b97825 54%, #ffd43d);
 }
 
-.reverse-lifeline-btn.is-locked::after {
+.briefcase-lifeline-btn::before {
   content: "";
   position: absolute;
-  left: 10px;
-  right: 10px;
-  top: 50%;
-  z-index: 3;
-  height: 3px;
-  border-radius: 999px;
-  background: rgba(14, 15, 20, 0.78);
-  box-shadow:
-    0 -12px 0 rgba(14, 15, 20, 0.78),
-    0 12px 0 rgba(14, 15, 20, 0.78),
-    0 1px 0 rgba(255, 255, 255, 0.22);
-  transform: translateY(-50%);
+  top: 9px;
+  width: 22px;
+  height: 10px;
+  border: 3px solid rgba(38, 24, 12, 0.92);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
 }
 
-.reverse-lifeline-btn.is-unlocking::after {
-  content: "\1F511";
-  position: absolute;
-  right: 2px;
-  top: 0;
-  z-index: 3;
-  font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif;
-  font-size: 1.05rem;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.56));
-}
-
-.reverse-lifeline-btn.is-locked .reverse-lifeline-shackle {
-  display: block;
-}
-
-.reverse-lifeline-btn.is-unlocking::before {
-  animation: cageOpen 1.35s ease forwards;
-}
-
-.reverse-lifeline-btn.is-unlocking::after {
-  animation: keyUnlock 1.35s ease forwards;
-}
-
-.reverse-lifeline-btn.is-consumed {
+.briefcase-lifeline-icon {
+  width: 34px;
+  height: 25px;
   display: grid;
+  place-items: center;
+  border: 3px solid rgba(38, 24, 12, 0.94);
+  border-radius: 6px;
+  color: #fff3cf;
+  background: linear-gradient(180deg, #7c4a1f, #3a2414);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.24);
+  font-size: 0.86rem;
+  font-weight: 1000;
+}
+
+.briefcase-lifeline-btn.is-locked {
+  filter: grayscale(0.9);
+}
+
+.briefcase-lifeline-btn.is-locked::after {
+  content: "\1F512";
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(10, 10, 12, 0.92);
+  box-shadow: 0 0 0 2px rgba(255, 243, 207, 0.48);
+  font-size: 0.8rem;
 }
 
 .angel-lifeline-btn {
@@ -2557,7 +2526,7 @@ textarea:focus {
 }
 
 .lifeline-choice-panel,
-.reverse-editor-panel {
+.briefcase-panel {
   grid-template-rows: auto auto 1fr;
   width: min(720px, calc(100vw - 32px));
 }
@@ -2583,37 +2552,115 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.14);
 }
 
-.reverse-question-card {
-  min-height: 0;
-  overflow-y: auto;
+.briefcase-info {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 22px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.28);
+  text-align: center;
 }
 
-.reverse-animation-layer {
+.briefcase-mark {
+  width: 96px;
+  height: 66px;
+  display: grid;
+  place-items: center;
+  border: 4px solid #ffd43d;
+  border-radius: 12px;
+  color: #ffd43d;
+  background: linear-gradient(180deg, #32200f, #080604);
+  box-shadow: 0 0 22px rgba(255, 212, 61, 0.3);
+  font-size: 2rem;
+  font-weight: 1000;
+}
+
+.briefcase-info p {
+  margin: 0;
+  color: #fff;
+  font-weight: 900;
+}
+
+.briefcase-info strong {
+  color: var(--yellow);
+  font-size: 2rem;
+}
+
+.briefcase-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.briefcase-choice {
+  min-height: 66px;
+  border: 0;
+  border-radius: 12px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 1.05rem;
+  font-weight: 1000;
+}
+
+.briefcase-choice.have {
+  background: linear-gradient(180deg, #42e37f, #168b42);
+}
+
+.briefcase-choice.not-have {
+  background: linear-gradient(180deg, #ff5b5b, #b31224);
+}
+
+.briefcase-creator-controls {
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.briefcase-creator-timer {
+  justify-self: center;
+  min-width: 92px;
+  padding: 8px 16px;
+  border: 2px solid rgba(255, 212, 61, 0.72);
+  border-radius: 999px;
+  color: var(--yellow);
+  background: rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0 16px rgba(255, 212, 61, 0.2);
+  font-size: 1.35rem;
+  text-align: center;
+}
+
+.briefcase-result-layer {
   position: fixed;
   inset: 0;
-  z-index: 39;
+  z-index: 46;
   display: grid;
   place-items: center;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.18);
   pointer-events: none;
+  background: rgba(0, 0, 0, 0.18);
 }
 
-.reverse-animation-card {
-  width: min(180px, 28vw);
-  max-width: none;
+.briefcase-result-layer strong {
+  padding: 18px 28px;
   border-radius: 18px;
-  box-shadow:
-    0 0 38px rgba(255, 255, 255, 0.45),
-    0 28px 84px rgba(0, 0, 0, 0.64);
-  animation: reverseCardSpin 180ms linear infinite;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.78);
+  box-shadow: 0 0 34px rgba(255, 212, 61, 0.35);
+  font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+  font-size: clamp(2.4rem, 8vw, 6rem);
+  letter-spacing: 0;
+  animation: briefcaseResultPop 2.6s ease forwards;
 }
 
-.reverse-animation-wrap {
-  display: grid;
-  place-items: center;
-  animation: reverseCardRush 3s cubic-bezier(0.08, 0.86, 0.12, 1) forwards;
-  transform: scale(0.25);
+.briefcase-result-layer.success strong {
+  color: #ffd43d;
+  text-shadow: 0 0 18px rgba(255, 212, 61, 0.55);
+}
+
+.briefcase-result-layer.lost strong {
+  color: #ff5b5b;
+  text-shadow: 0 0 18px rgba(255, 37, 87, 0.52);
 }
 
 .revive-spotlight-layer {
@@ -2653,42 +2700,6 @@ textarea:focus {
   animation: reviveGlow 2.4s ease-out forwards;
 }
 
-@keyframes reverseCardRush {
-  0% {
-    opacity: 0;
-    transform: scale(0.25);
-  }
-
-  12% {
-    opacity: 1;
-  }
-
-  54% {
-    opacity: 1;
-    transform: scale(7);
-  }
-
-  76% {
-    opacity: 1;
-    transform: scale(14);
-  }
-
-  100% {
-    opacity: 0;
-    transform: scale(0.35);
-  }
-}
-
-@keyframes reverseCardSpin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @keyframes reviveBeam {
   0% {
     opacity: 0;
@@ -2722,6 +2733,32 @@ textarea:focus {
   100% {
     opacity: 0;
     transform: translate(-50%, -50%) scale(1.18);
+  }
+}
+
+@keyframes briefcaseResultPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) rotate(-3deg);
+  }
+
+  18% {
+    opacity: 1;
+    transform: scale(1.08) rotate(2deg);
+  }
+
+  34% {
+    transform: scale(1) rotate(0deg);
+  }
+
+  78% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(0.92);
   }
 }
 

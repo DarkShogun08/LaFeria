@@ -7,13 +7,12 @@ const CREATOR_QUESTION_OPTIONS = ['A', 'B', 'C', 'D'];
 const CREATOR_QUESTIONS_FALLBACK_KEY = 'laFeria_creator_questions';
 const FAIR_QUESTION_IMAGE_SRC = 'images/WhatsApp%20Image%202026-05-27%20at%2010.57.43%20(1).jpeg';
 const SHIELD_IMAGE_SRC = 'images/Escudo.png';
-const REVERSE_IMAGE_SRC = 'images/Uno%20reverse%20clean.png';
 const ROULETTE_SEGMENTS = [0, 1, 2, 1, 3, 1, 2, 1, 0, 1, 2, 1, 1, 2, 3, 1];
 const ROULETTE_SEGMENT_DEGREES = 360 / ROULETTE_SEGMENTS.length;
 const ROULETTE_SPIN_MS = 5000;
-const REVERSE_ANIMATION_MS = 3000;
-const REVERSE_ANIMATION_DELAY_MS = 500;
 const REVIVE_ANIMATION_DELAY_MS = 1200;
+const BRIEFCASE_HOLD_SECONDS = 60;
+const BRIEFCASE_RESULT_ANIMATION_MS = 2600;
 const QUIZ_REVEAL_DELAY_MS = 5000;
 const AUDIO_SETTINGS_KEY = 'laFeria_audio_settings';
 const MUSIC_MANIFEST_SRC = 'sounds/music-manifest.json';
@@ -27,8 +26,8 @@ const SOUNDS = {
   waitSound: 'sounds/Espera.mp3',
   rouletteSound: 'sounds/Ruleta.m4a',
   totemSound: 'sounds/Totemsonido.mp4',
-  reverseSound: 'sounds/Reversa.m4a',
   reviveSound: 'sounds/Revivir.m4a',
+  briefcaseSound: 'sounds/Malet%C3%ADn.mp3',
   victorySound: 'sounds/Victoria.mp3',
   defeatSound: 'sounds/Derrota.mp3',
 };
@@ -37,9 +36,9 @@ const TIMER_SOUND_VOLUME = 0.12;
 const WAIT_SOUND_VOLUME = 0.2;
 const ROULETTE_SOUND_VOLUME = 0.45;
 const TOTEM_SOUND_VOLUME = 0.72;
-const REVERSE_SOUND_VOLUME = 0.62;
 const REVIVE_SOUND_VOLUME = 0.58;
 const FINAL_SOUND_VOLUME = 0.62;
+const BRIEFCASE_MUSIC_MAX_VOLUME = 0.14;
 
 function clampVolume(value, fallback = 1) {
   const number = Number(value);
@@ -132,10 +131,13 @@ const state = {
   shieldArmed: false,
   shieldArmedQuestionIndex: null,
   angelLifelineUsed: false,
-  reverseLifelineUsed: false,
-  reverseUnlockAnimated: false,
-  reverseQuestion: emptyCreatorQuestion(),
-  reverseAnimationTimeout: null,
+  briefcaseLifelineUsed: false,
+  briefcaseActive: false,
+  briefcaseRemaining: BRIEFCASE_HOLD_SECONDS,
+  briefcaseTimerInterval: null,
+  briefcaseAudio: null,
+  briefcaseQuestionIndex: null,
+  briefcaseStatus: '',
   participantAway: false,
   creatorQuestionsSaveTimeout: null,
   creatorQuestionsLoadedKey: '',
@@ -414,6 +416,7 @@ function toggleAnswerDelay() {
 function resetQuizRound() {
   clearQuizSuspense();
   stopQuestionMusic();
+  stopBriefcaseMusic();
   document.querySelectorAll('.quiz-final-overlay, .fireworks-layer, .crying-emoji-layer, .totem-save-layer').forEach(item => item.remove());
   state.currentQuestionIndex = -1;
   state.quizRevealStep = -1;
@@ -613,13 +616,23 @@ function handleDataMessage(data) {
     return;
   }
 
-  if (data.type === 'reverse-lifeline-state') {
-    applyReverseLifelineState(data);
+  if (data.type === 'briefcase-lifeline-state') {
+    applyBriefcaseLifelineState(data);
     return;
   }
 
-  if (data.type === 'reverse-start') {
-    runReverseAnimation(data.index, data.question, false);
+  if (data.type === 'briefcase-open') {
+    openBriefcaseChoicePanel();
+    return;
+  }
+
+  if (data.type === 'briefcase-choice') {
+    handleBriefcaseChoice(data.choice);
+    return;
+  }
+
+  if (data.type === 'briefcase-result') {
+    showBriefcaseResult(data.result);
     return;
   }
 
@@ -683,7 +696,7 @@ function bindDataConnection(connection) {
       sendRouletteLifelineState();
       sendShieldLifelineState();
       sendAngelLifelineState();
-      sendReverseLifelineState();
+      sendBriefcaseLifelineState();
     }
   });
   connection.on('data', handleDataMessage);
@@ -893,6 +906,14 @@ function targetMusicVolume() {
   return state.musicDucked ? 0 : state.musicVolume;
 }
 
+function targetBriefcaseMusicVolume() {
+  return state.musicDucked ? 0 : Math.min(BRIEFCASE_MUSIC_MAX_VOLUME, state.musicVolume);
+}
+
+function isBriefcaseMusicMode() {
+  return state.briefcaseStatus === 'choice' || state.briefcaseActive;
+}
+
 function stopQuestionMusic() {
   clearMusicFade();
   if (state.musicAudio) {
@@ -908,8 +929,49 @@ function stopQuestionMusic() {
   state.musicCurrentLevel = '';
 }
 
+function stopBriefcaseMusic() {
+  if (state.briefcaseAudio) {
+    try {
+      state.briefcaseAudio.pause();
+      state.briefcaseAudio.currentTime = 0;
+    } catch (err) {
+      console.warn('No se pudo parar la musica del maletin.', err);
+    }
+  }
+  state.briefcaseAudio = null;
+}
+
+function playBriefcaseMusic() {
+  stopQuestionMusic();
+  stopBriefcaseMusic();
+  try {
+    const audio = new Audio(SOUNDS.briefcaseSound);
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.volume = targetBriefcaseMusicVolume();
+    state.briefcaseAudio = audio;
+    audio.play()?.catch(err => console.warn('No se pudo reproducir la musica del maletin.', err));
+  } catch (err) {
+    console.warn('No se pudo preparar la musica del maletin.', err);
+  }
+}
+
+function ensureBriefcaseMusic() {
+  stopQuestionMusic();
+  if (state.briefcaseAudio) {
+    state.briefcaseAudio.volume = targetBriefcaseMusicVolume();
+    if (state.briefcaseAudio.paused) state.briefcaseAudio.play()?.catch(() => {});
+    return;
+  }
+  playBriefcaseMusic();
+}
+
 function syncQuestionMusic() {
   if (state.currentQuestionIndex < 0) {
+    stopQuestionMusic();
+    return;
+  }
+  if (isBriefcaseMusicMode()) {
     stopQuestionMusic();
     return;
   }
@@ -1009,6 +1071,7 @@ function applyAudioSettings() {
   const remoteVideo = $('remoteVideo');
   if (remoteVideo) remoteVideo.volume = state.remoteVoiceVolume;
   if (state.musicAudio) fadeMusicTo(targetMusicVolume(), 120);
+  if (state.briefcaseAudio) state.briefcaseAudio.volume = targetBriefcaseMusicVolume();
   updateAudioSettingsUi();
 }
 
@@ -1065,7 +1128,7 @@ function confirmLifelineReuse(type) {
         ? state.shieldLifelineUsed
         : type === 'angel'
           ? state.angelLifelineUsed
-          : state.reverseLifelineUsed;
+          : state.briefcaseLifelineUsed;
   if (!used) return true;
   return window.confirm('\u00bfQuieres volver a usar este comodin?');
 }
@@ -1078,7 +1141,7 @@ function isAngelUnlocked() {
   return state.currentQuestionIndex >= 7;
 }
 
-function isReverseUnlocked() {
+function isBriefcaseUnlocked() {
   return state.currentQuestionIndex >= 11;
 }
 
@@ -1089,9 +1152,9 @@ function updateLifelineButtonState() {
   const rouletteButton = $('rouletteLifelineBtn');
   const shieldButton = $('shieldLifelineBtn');
   const angelButton = $('angelLifelineBtn');
-  const reverseButton = $('reverseLifelineBtn');
+  const briefcaseButton = $('briefcaseLifelineBtn');
   const angelUnlocked = isAngelUnlocked();
-  const reverseUnlocked = isReverseUnlocked();
+  const briefcaseUnlocked = isBriefcaseUnlocked();
   bar?.classList.toggle('viewer-lifelines', viewerOnly);
   phoneButton?.classList.toggle('is-used', state.phoneLifelineUsed);
   rouletteButton?.classList.toggle('is-used', state.rouletteLifelineUsed);
@@ -1099,20 +1162,15 @@ function updateLifelineButtonState() {
   shieldButton?.classList.toggle('is-armed', state.shieldArmed);
   angelButton?.classList.toggle('is-used', state.angelLifelineUsed);
   angelButton?.classList.toggle('is-disabled', false);
-  reverseButton?.classList.toggle('is-used', state.reverseLifelineUsed);
-  reverseButton?.classList.toggle('is-consumed', false);
-  reverseButton?.classList.toggle('is-locked', !reverseUnlocked && !state.reverseLifelineUsed);
-  if (reverseUnlocked && !state.reverseUnlockAnimated && reverseButton && !state.reverseLifelineUsed) {
-    state.reverseUnlockAnimated = true;
-    reverseButton.classList.add('is-unlocking');
-    setTimeout(() => reverseButton.classList.remove('is-unlocking'), 1600);
-  }
+  briefcaseButton?.classList.toggle('is-used', state.briefcaseLifelineUsed);
+  briefcaseButton?.classList.toggle('is-armed', state.briefcaseActive);
+  briefcaseButton?.classList.toggle('is-locked', !briefcaseUnlocked && !state.briefcaseLifelineUsed);
   [
     [phoneButton, false],
     [rouletteButton, false],
     [shieldButton, false],
     [angelButton, false],
-    [reverseButton, false],
+    [briefcaseButton, !briefcaseUnlocked],
   ].forEach(([button, disabled]) => {
     if (!button) return;
     const inactive = viewerOnly || disabled;
@@ -1435,7 +1493,7 @@ function usedLifelineOptions() {
     { type: 'phone', label: 'Llamada', used: state.phoneLifelineUsed },
     { type: 'roulette', label: 'Ruleta', used: state.rouletteLifelineUsed },
     { type: 'shield', label: 'Escudo', used: state.shieldLifelineUsed },
-    { type: 'reverse', label: 'Reversa', used: state.reverseLifelineUsed },
+    { type: 'briefcase', label: 'Maletin', used: state.briefcaseLifelineUsed },
   ].filter(item => item.used);
 }
 
@@ -1478,9 +1536,9 @@ function reviveLifeline(type) {
     state.shieldArmed = false;
     state.shieldArmedQuestionIndex = null;
     sendShieldLifelineState();
-  } else if (type === 'reverse') {
-    state.reverseLifelineUsed = false;
-    sendReverseLifelineState();
+  } else if (type === 'briefcase') {
+    resetBriefcaseLifeline();
+    sendBriefcaseLifelineState();
   } else {
     return;
   }
@@ -1500,101 +1558,193 @@ function resetAngelLifeline() {
   updateLifelineButtonState();
 }
 
-function sendReverseLifelineState(extra = {}) {
+function stopBriefcaseTimer() {
+  if (state.briefcaseTimerInterval) clearInterval(state.briefcaseTimerInterval);
+  state.briefcaseTimerInterval = null;
+}
+
+function sendBriefcaseLifelineState(extra = {}) {
   if (state.role !== 'creator') return;
   sendDataMessage({
-    type: 'reverse-lifeline-state',
-    used: state.reverseLifelineUsed,
+    type: 'briefcase-lifeline-state',
+    used: state.briefcaseLifelineUsed,
+    active: state.briefcaseActive,
+    remaining: state.briefcaseRemaining,
+    status: state.briefcaseStatus,
     ...extra,
   });
 }
 
-function applyReverseLifelineState(data) {
+function applyBriefcaseLifelineState(data) {
   if (state.role === 'creator') return;
-  if ('used' in data) state.reverseLifelineUsed = Boolean(data.used);
+  if ('used' in data) state.briefcaseLifelineUsed = Boolean(data.used);
+  if ('active' in data) state.briefcaseActive = Boolean(data.active);
+  if ('remaining' in data) state.briefcaseRemaining = Math.max(0, Math.min(BRIEFCASE_HOLD_SECONDS, Math.round(Number(data.remaining) || 0)));
+  if ('status' in data) state.briefcaseStatus = String(data.status || '');
+  if (state.briefcaseStatus === 'choice' || state.briefcaseActive) ensureBriefcaseMusic();
+  if (state.briefcaseStatus === 'lost' || state.briefcaseStatus === 'success') stopBriefcaseMusic();
+  updateBriefcasePanel();
   updateLifelineButtonState();
 }
 
-function resetReverseEditorFields() {
-  const question = emptyCreatorQuestion();
-  $('reversePromptInput').value = question.prompt;
-  CREATOR_QUESTION_OPTIONS.forEach(option => {
-    const field = $(`reverseAnswer${option}`);
-    if (field) field.value = '';
-  });
-  $('reverseCorrectSelect').value = question.correct;
-  $('reverseFairQuestion').checked = false;
+function updateBriefcasePanel() {
+  const modal = $('briefcaseLifelineModal');
+  if (!modal) return;
+  const isGuestChoice = state.role === 'guest' && state.briefcaseStatus === 'choice';
+  const isCreatorControl = state.role === 'creator' && (state.briefcaseStatus === 'choice' || state.briefcaseActive || state.briefcaseStatus === 'lost' || state.briefcaseStatus === 'success');
+  const isGuestHolding = state.role === 'guest' && (state.briefcaseActive || state.briefcaseStatus === 'lost' || state.briefcaseStatus === 'success');
+  modal.classList.toggle('hidden', !(isGuestChoice || isCreatorControl || isGuestHolding));
+  $('briefcaseGuestChoices')?.classList.toggle('hidden', !isGuestChoice);
+  $('briefcaseCreatorControls')?.classList.toggle('hidden', !isCreatorControl);
+  $('briefcaseInfo')?.classList.toggle('hidden', isGuestChoice);
+  const changeButton = $('briefcaseChangeBtn');
+  if (changeButton) changeButton.disabled = !state.briefcaseActive;
+  const timer = $('briefcaseTimer');
+  const timerText = `${String(state.briefcaseRemaining).padStart(2, '0')}s`;
+  if (timer) timer.textContent = timerText;
+  const creatorTimer = $('briefcaseCreatorTimer');
+  if (creatorTimer) creatorTimer.textContent = timerText;
+  const status = $('briefcaseStatus');
+  if (status) {
+    status.textContent = state.briefcaseStatus === 'lost'
+      ? 'El maletin no tenia -3. Comodin perdido.'
+      : state.briefcaseStatus === 'success'
+        ? 'Maletin completado: se quitaron las 3 respuestas incorrectas.'
+        : state.briefcaseActive
+          ? 'El invitado tiene el maletin -3.'
+          : 'Esperando decision del invitado.';
+  }
 }
 
-function openReverseLifeline() {
+function openBriefcaseChoicePanel() {
+  if (state.role !== 'guest') return;
+  playBriefcaseMusic();
+  state.briefcaseStatus = 'choice';
+  state.briefcaseActive = false;
+  state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
+  updateBriefcasePanel();
+}
+
+function openBriefcaseLifeline() {
   if (state.role !== 'creator') return;
-  if (!isReverseUnlocked() && !confirmEarlyLifelineUse()) return;
-  if (state.reverseLifelineUsed && !confirmLifelineReuse('reverse')) return;
-  resetReverseEditorFields();
-  $('reverseEditorModal')?.classList.remove('hidden');
-}
-
-function closeReverseEditorPanel() {
-  $('reverseEditorModal')?.classList.add('hidden');
-}
-
-function readReverseQuestionFromPanel() {
-  const question = emptyCreatorQuestion();
-  question.prompt = $('reversePromptInput')?.value.trim() || 'Pregunta reversa';
-  CREATOR_QUESTION_OPTIONS.forEach(option => {
-    question.answers[option] = $(`reverseAnswer${option}`)?.value.trim() || `Respuesta ${option}`;
-  });
-  const correct = $('reverseCorrectSelect')?.value;
-  question.correct = CREATOR_QUESTION_OPTIONS.includes(correct) ? correct : 'A';
-  question.fairQuestion = Boolean($('reverseFairQuestion')?.checked);
-  return normalizeCreatorQuestion(question);
-}
-
-function useReverseQuestion() {
-  if (state.role !== 'creator') return;
-  const index = state.currentQuestionIndex >= 0 ? state.currentQuestionIndex : 0;
-  const question = readReverseQuestionFromPanel();
-  state.reverseLifelineUsed = true;
-  state.reverseQuestion = question;
-  closeReverseEditorPanel();
+  if (!isBriefcaseUnlocked()) {
+    setStatus('El maletin se desbloquea al llegar a la pregunta 12.', 'info');
+    return;
+  }
+  if (state.currentQuestionIndex < 0) {
+    setStatus('Primero muestra una pregunta para usar el maletin.', 'info');
+    return;
+  }
+  if (state.briefcaseLifelineUsed && !confirmLifelineReuse('briefcase')) return;
+  playBriefcaseMusic();
+  state.briefcaseLifelineUsed = true;
+  state.briefcaseActive = false;
+  state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
+  state.briefcaseQuestionIndex = state.currentQuestionIndex >= 0 ? state.currentQuestionIndex : null;
+  state.briefcaseStatus = 'choice';
+  stopBriefcaseTimer();
+  updateBriefcasePanel();
   updateLifelineButtonState();
-  sendReverseLifelineState();
-  sendDataMessage({ type: 'reverse-start', index, question });
-  runReverseAnimation(index, question, true);
+  sendDataMessage({ type: 'briefcase-open' });
+  sendBriefcaseLifelineState();
 }
 
-function runReverseAnimation(index, question, sendStateWhenDone = false) {
-  const safeIndex = Number.isInteger(Number(index)) ? Math.max(0, Math.min(CREATOR_QUESTION_COUNT - 1, Number(index))) : 0;
-  const safeQuestion = normalizeCreatorQuestion(question);
-  clearTimeout(state.reverseAnimationTimeout);
-  playQuizSound('reverseSound', REVERSE_SOUND_VOLUME);
-  setTimeout(launchReverseAnimation, REVERSE_ANIMATION_DELAY_MS);
-  state.reverseAnimationTimeout = setTimeout(() => {
-    applyReverseQuestion(safeIndex, safeQuestion, sendStateWhenDone);
-  }, REVERSE_ANIMATION_MS + REVERSE_ANIMATION_DELAY_MS);
+function closeBriefcasePanel() {
+  $('briefcaseLifelineModal')?.classList.add('hidden');
 }
 
-function applyReverseQuestion(index, question, sendStateWhenDone = false) {
-  state.creatorQuestions = normalizeCreatorQuestions(state.creatorQuestions);
-  state.creatorQuestions[index] = normalizeCreatorQuestion(question);
-  state.currentQuestionIndex = index;
-  state.quizRevealStep = 4;
-  state.quizSelectedAnswers[index] = null;
-  state.quizResults[index] = null;
-  state.quizEliminatedAnswers[index] = [];
-  state.quizPendingSelection = null;
-  clearQuizSuspense();
-  displayQuizQuestion(index, state.creatorQuestions[index], state.quizRevealStep);
-  if (sendStateWhenDone && state.role === 'creator') sendQuizState();
+function chooseBriefcase(choice) {
+  if (state.role !== 'guest') return;
+  state.briefcaseLifelineUsed = true;
+  sendDataMessage({ type: 'briefcase-choice', choice });
+  state.briefcaseStatus = choice === 'have' ? 'active' : 'lost';
+  state.briefcaseActive = choice === 'have';
+  if (choice === 'have') ensureBriefcaseMusic();
+  else {
+    stopBriefcaseMusic();
+    showBriefcaseResult('lost');
+  }
+  updateBriefcasePanel();
 }
 
-function resetReverseLifeline() {
-  clearTimeout(state.reverseAnimationTimeout);
-  state.reverseAnimationTimeout = null;
-  state.reverseLifelineUsed = false;
-  state.reverseUnlockAnimated = false;
-  state.reverseQuestion = emptyCreatorQuestion();
-  closeReverseEditorPanel();
+function handleBriefcaseChoice(choice) {
+  if (state.role !== 'creator') return;
+  state.briefcaseLifelineUsed = true;
+  stopBriefcaseTimer();
+  if (choice !== 'have') {
+    stopBriefcaseMusic();
+    state.briefcaseActive = false;
+    state.briefcaseStatus = 'lost';
+    state.briefcaseRemaining = 0;
+    updateBriefcasePanel();
+    updateLifelineButtonState();
+    sendBriefcaseLifelineState();
+    showBriefcaseResult('lost');
+    sendDataMessage({ type: 'briefcase-result', result: 'lost' });
+    syncQuestionMusic();
+    return;
+  }
+  state.briefcaseActive = true;
+  state.briefcaseStatus = 'active';
+  state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
+  state.briefcaseQuestionIndex = state.currentQuestionIndex >= 0 ? state.currentQuestionIndex : null;
+  updateBriefcasePanel();
+  updateLifelineButtonState();
+  sendBriefcaseLifelineState();
+  state.briefcaseTimerInterval = setInterval(() => {
+    state.briefcaseRemaining = Math.max(0, state.briefcaseRemaining - 1);
+    updateBriefcasePanel();
+    sendBriefcaseLifelineState();
+    if (state.briefcaseRemaining <= 0) completeBriefcaseLifeline();
+  }, 1000);
+}
+
+function changeBriefcaseOwner() {
+  if (state.role !== 'creator' || !state.briefcaseActive) return;
+  playBriefcaseMusic();
+  stopBriefcaseTimer();
+  state.briefcaseActive = false;
+  state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
+  state.briefcaseStatus = 'choice';
+  updateBriefcasePanel();
+  sendDataMessage({ type: 'briefcase-open' });
+  sendBriefcaseLifelineState();
+}
+
+function completeBriefcaseLifeline() {
+  if (state.role !== 'creator') return;
+  stopBriefcaseTimer();
+  stopBriefcaseMusic();
+  const index = state.currentQuestionIndex >= 0 ? state.currentQuestionIndex : state.briefcaseQuestionIndex;
+  if (Number.isInteger(index) && index >= 0 && index < CREATOR_QUESTION_COUNT) {
+    const question = normalizeCreatorQuestion(state.creatorQuestions[index]);
+    state.quizRevealStep = 4;
+    state.quizEliminatedAnswers[index] = CREATOR_QUESTION_OPTIONS.filter(option => option !== question.correct);
+    if (state.currentQuestionIndex === index) displayQuizQuestion(index, question, state.quizRevealStep);
+    else renderQuizProgress();
+    sendDataMessage({ type: 'quiz-eliminations', index, eliminated: state.quizEliminatedAnswers[index] });
+    sendQuizState();
+  }
+  state.briefcaseActive = false;
+  state.briefcaseStatus = 'success';
+  state.briefcaseRemaining = 0;
+  updateBriefcasePanel();
+  updateLifelineButtonState();
+  sendBriefcaseLifelineState();
+  showBriefcaseResult('success');
+  sendDataMessage({ type: 'briefcase-result', result: 'success' });
+  syncQuestionMusic();
+}
+
+function resetBriefcaseLifeline() {
+  stopBriefcaseTimer();
+  stopBriefcaseMusic();
+  state.briefcaseLifelineUsed = false;
+  state.briefcaseActive = false;
+  state.briefcaseRemaining = BRIEFCASE_HOLD_SECONDS;
+  state.briefcaseQuestionIndex = null;
+  state.briefcaseStatus = '';
+  closeBriefcasePanel();
   updateLifelineButtonState();
 }
 
@@ -1784,6 +1934,7 @@ function showQuizFinal(text, type) {
   if (state.quizFinalShown && state.quizFinalType === type) return;
   document.querySelectorAll('.quiz-final-overlay, .crying-emoji-layer').forEach(item => item.remove());
   stopQuestionMusic();
+  stopBriefcaseMusic();
   playQuizSound(type === 'victory' ? 'victorySound' : 'defeatSound', FINAL_SOUND_VOLUME);
   state.quizFinalShown = true;
   state.quizFinalType = type;
@@ -1864,28 +2015,12 @@ function launchTotemSaveAnimation() {
   setTimeout(() => layer.remove(), 4200);
 }
 
-function launchReverseAnimation() {
-  document.querySelectorAll('.reverse-animation-layer').forEach(item => item.remove());
-  const layer = document.createElement('div');
-  layer.className = 'reverse-animation-layer';
-  const wrap = document.createElement('div');
-  wrap.className = 'reverse-animation-wrap';
-  const card = document.createElement('img');
-  card.className = 'reverse-animation-card';
-  card.src = REVERSE_IMAGE_SRC;
-  card.alt = '';
-  wrap.appendChild(card);
-  layer.appendChild(wrap);
-  document.body.appendChild(layer);
-  setTimeout(() => layer.remove(), REVERSE_ANIMATION_MS + 450);
-}
-
 function lifelineButtonForType(type) {
   return {
     phone: 'phoneLifelineBtn',
     roulette: 'rouletteLifelineBtn',
     shield: 'shieldLifelineBtn',
-    reverse: 'reverseLifelineBtn',
+    briefcase: 'briefcaseLifelineBtn',
   }[type] || '';
 }
 
@@ -1913,6 +2048,17 @@ function launchReviveAnimation(type) {
   layer.appendChild(glow);
   document.body.appendChild(layer);
   setTimeout(() => layer.remove(), 2700);
+}
+
+function showBriefcaseResult(result) {
+  document.querySelectorAll('.briefcase-result-layer').forEach(item => item.remove());
+  const layer = document.createElement('div');
+  layer.className = `briefcase-result-layer ${result === 'success' ? 'success' : 'lost'}`;
+  const text = document.createElement('strong');
+  text.textContent = result === 'success' ? '-3 PREGUNTAS!' : 'Has perdido :(';
+  layer.appendChild(text);
+  document.body.appendChild(layer);
+  setTimeout(() => layer.remove(), BRIEFCASE_RESULT_ANIMATION_MS);
 }
 
 function launchConfetti(options = {}) {
@@ -2321,15 +2467,14 @@ function prepareCallScreen(role) {
   state.shieldArmed = false;
   state.shieldArmedQuestionIndex = null;
   state.angelLifelineUsed = false;
-  state.reverseLifelineUsed = false;
-  state.reverseUnlockAnimated = false;
+  state.briefcaseLifelineUsed = false;
   state.answerDelayEnabled = true;
   syncAnswerDelayCheckbox();
   resetPhoneLifeline();
   resetRouletteLifeline();
   resetShieldLifeline();
   resetAngelLifeline();
-  resetReverseLifeline();
+  resetBriefcaseLifeline();
   resetQuizDisplay();
   closeSettingsPanel();
   showScreen('roomScreen');
@@ -2453,13 +2598,12 @@ function leaveRoom() {
   state.shieldArmed = false;
   state.shieldArmedQuestionIndex = null;
   state.angelLifelineUsed = false;
-  state.reverseLifelineUsed = false;
-  state.reverseUnlockAnimated = false;
+  state.briefcaseLifelineUsed = false;
   resetPhoneLifeline();
   resetRouletteLifeline();
   resetShieldLifeline();
   resetAngelLifeline();
-  resetReverseLifeline();
+  resetBriefcaseLifeline();
   resetQuizDisplay();
   closeSettingsPanel();
   closeCreatorQuestionsPanel();

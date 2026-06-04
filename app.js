@@ -1138,7 +1138,7 @@ function confirmLifelineReuse(type) {
           ? state.angelLifelineUsed
           : state.briefcaseLifelineUsed;
   if (!used) return true;
-  return window.confirm('\u00bfQuieres volver a usar este comodin?');
+  return window.confirm('\u00bfSeguro que quieres utilizar este comodin otra vez?');
 }
 
 function confirmEarlyLifelineUse() {
@@ -1162,7 +1162,7 @@ function updateLifelineButtonState() {
   const angelButton = $('angelLifelineBtn');
   const briefcaseButton = $('briefcaseLifelineBtn');
   const angelUnlocked = isAngelUnlocked();
-  const briefcaseUnlocked = isBriefcaseUnlocked();
+  const briefcaseUnlocked = true;
   bar?.classList.toggle('viewer-lifelines', viewerOnly);
   phoneButton?.classList.toggle('is-used', state.phoneLifelineUsed);
   rouletteButton?.classList.toggle('is-used', state.rouletteLifelineUsed);
@@ -1172,13 +1172,13 @@ function updateLifelineButtonState() {
   angelButton?.classList.toggle('is-disabled', false);
   briefcaseButton?.classList.toggle('is-used', state.briefcaseLifelineUsed);
   briefcaseButton?.classList.toggle('is-armed', state.briefcaseActive);
-  briefcaseButton?.classList.toggle('is-locked', !briefcaseUnlocked && !state.briefcaseLifelineUsed);
+  briefcaseButton?.classList.toggle('is-locked', false);
   [
     [phoneButton, false],
     [rouletteButton, false],
     [shieldButton, false],
     [angelButton, false],
-    [briefcaseButton, !briefcaseUnlocked],
+    [briefcaseButton, false],
   ].forEach(([button, disabled]) => {
     if (!button) return;
     const inactive = viewerOnly || disabled;
@@ -1669,15 +1669,11 @@ function openBriefcaseChoicePanel() {
 
 function openBriefcaseLifeline() {
   if (state.role !== 'creator') return;
-  if (state.briefcaseLifelineUsed && (state.briefcaseStatus || state.briefcaseActive)) {
+  if (state.briefcaseActive || state.briefcaseStatus === 'choice') {
     state.briefcasePanelOpen = true;
     if (isBriefcaseMusicMode()) playBriefcaseMusic();
     updateBriefcasePanel();
     sendBriefcaseLifelineState();
-    return;
-  }
-  if (!isBriefcaseUnlocked()) {
-    setStatus('El maletin se desbloquea al llegar a la pregunta 12.', 'info');
     return;
   }
   if (state.currentQuestionIndex < 0) {

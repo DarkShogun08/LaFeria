@@ -17,6 +17,7 @@ const REVIVE_ANIMATION_DELAY_MS = 1200;
 const QUIZ_REVEAL_DELAY_MS = 5000;
 const AUDIO_SETTINGS_KEY = 'laFeria_audio_settings';
 const MUSIC_MANIFEST_SRC = 'sounds/music-manifest.json';
+const CREATOR_QUESTIONS_SAVE_DELAY_MS = 450;
 const DEFAULT_MUSIC_VOLUME = 0.12;
 const DEFAULT_MUSIC_MANIFEST = { level1: [], level2: [], level3: [] };
 const SOUNDS = {
@@ -28,6 +29,8 @@ const SOUNDS = {
   totemSound: 'sounds/Totemsonido.mp4',
   reverseSound: 'sounds/Reversa.m4a',
   reviveSound: 'sounds/Revivir.m4a',
+  victorySound: 'sounds/Victoria.mp3',
+  defeatSound: 'sounds/Derrota.mp3',
 };
 const QUIZ_SOUND_VOLUME = 0.35;
 const TIMER_SOUND_VOLUME = 0.12;
@@ -36,6 +39,7 @@ const ROULETTE_SOUND_VOLUME = 0.45;
 const TOTEM_SOUND_VOLUME = 0.72;
 const REVERSE_SOUND_VOLUME = 0.62;
 const REVIVE_SOUND_VOLUME = 0.58;
+const FINAL_SOUND_VOLUME = 0.62;
 
 function clampVolume(value, fallback = 1) {
   const number = Number(value);
@@ -133,6 +137,8 @@ const state = {
   reverseQuestion: emptyCreatorQuestion(),
   reverseAnimationTimeout: null,
   participantAway: false,
+  creatorQuestionsSaveTimeout: null,
+  creatorQuestionsLoadedKey: '',
 };
 
 function $(id) {
@@ -253,19 +259,28 @@ function normalizeCreatorQuestions(raw) {
   return Array.from({ length: CREATOR_QUESTION_COUNT }, (_, index) => normalizeCreatorQuestion(source[index]));
 }
 
-function loadCreatorQuestions() {
+function loadCreatorQuestions({ render = false, force = false } = {}) {
+  const storageKey = creatorQuestionsStorageKey();
+  if (!force && state.creatorQuestionsLoadedKey === storageKey && state.creatorQuestions.length) {
+    if (render) renderCreatorQuestions();
+    return;
+  }
+
   let saved = null;
   try {
-    saved = JSON.parse(getLocalStorageItem(creatorQuestionsStorageKey()) || 'null');
+    saved = JSON.parse(getLocalStorageItem(storageKey) || 'null');
   } catch (err) {
     console.warn('No se pudieron leer las preguntas guardadas.', err);
   }
   state.creatorQuestions = normalizeCreatorQuestions(saved);
-  renderCreatorQuestions();
+  state.creatorQuestionsLoadedKey = storageKey;
+  if (render) renderCreatorQuestions();
 }
 
 function saveCreatorQuestions(silent = false) {
   if (state.role !== 'creator') return;
+  clearTimeout(state.creatorQuestionsSaveTimeout);
+  state.creatorQuestionsSaveTimeout = null;
   const ok = setLocalStorageItem(creatorQuestionsStorageKey(), JSON.stringify(state.creatorQuestions));
   const label = $('creatorQuestionsSaved');
   if (label) label.textContent = ok
@@ -273,10 +288,25 @@ function saveCreatorQuestions(silent = false) {
     : 'No se pudieron guardar las preguntas.';
 }
 
+function scheduleCreatorQuestionsSave() {
+  if (state.role !== 'creator') return;
+  clearTimeout(state.creatorQuestionsSaveTimeout);
+  const label = $('creatorQuestionsSaved');
+  if (label) label.textContent = 'Guardando...';
+  state.creatorQuestionsSaveTimeout = setTimeout(() => saveCreatorQuestions(true), CREATOR_QUESTIONS_SAVE_DELAY_MS);
+}
+
 function renderCreatorQuestions() {
   const list = $('creatorQuestionsList');
   if (!list) return;
-  list.innerHTML = '';
+  const activeElement = document.activeElement;
+  const activeIndex = activeElement?.dataset?.index || '';
+  const activeField = activeElement?.dataset?.field || '';
+  const activeOption = activeElement?.dataset?.option || '';
+  const activeSelectionStart = typeof activeElement?.selectionStart === 'number' ? activeElement.selectionStart : null;
+  const activeSelectionEnd = typeof activeElement?.selectionEnd === 'number' ? activeElement.selectionEnd : null;
+  const scrollTop = list.scrollTop;
+  const fragment = document.createDocumentFragment();
   state.creatorQuestions = normalizeCreatorQuestions(state.creatorQuestions);
 
   state.creatorQuestions.forEach((question, index) => {
@@ -304,8 +334,22 @@ function renderCreatorQuestions() {
         </select>
       </label>
     `;
-    list.appendChild(item);
+    fragment.appendChild(item);
   });
+
+  list.replaceChildren(fragment);
+  list.scrollTop = scrollTop;
+
+  if (activeIndex && activeField) {
+    const selector = `[data-index="${activeIndex}"][data-field="${activeField}"]${activeOption ? `[data-option="${activeOption}"]` : ''}`;
+    const nextActive = list.querySelector(selector);
+    if (nextActive) {
+      nextActive.focus({ preventScroll: true });
+      if (activeSelectionStart !== null && typeof nextActive.setSelectionRange === 'function') {
+        nextActive.setSelectionRange(activeSelectionStart, activeSelectionEnd);
+      }
+    }
+  }
 }
 
 function escapeHtml(value) {
@@ -341,17 +385,20 @@ function updateCreatorQuestionFromInput(target) {
   }
 
   state.creatorQuestions[index] = question;
-  saveCreatorQuestions(true);
+  scheduleCreatorQuestionsSave();
 }
 
 function openCreatorQuestionsPanel() {
   if (state.role !== 'creator') return;
-  loadCreatorQuestions();
+  loadCreatorQuestions({ force: true });
   syncAnswerDelayCheckbox();
-  $('creatorQuestionsModal')?.classList.remove('hidden');
+  const modal = $('creatorQuestionsModal');
+  modal?.classList.remove('hidden');
+  requestAnimationFrame(() => renderCreatorQuestions());
 }
 
 function closeCreatorQuestionsPanel() {
+  if (state.creatorQuestionsSaveTimeout) saveCreatorQuestions(true);
   $('creatorQuestionsModal')?.classList.add('hidden');
 }
 
@@ -1736,6 +1783,8 @@ function checkQuizFinal() {
 function showQuizFinal(text, type) {
   if (state.quizFinalShown && state.quizFinalType === type) return;
   document.querySelectorAll('.quiz-final-overlay, .crying-emoji-layer').forEach(item => item.remove());
+  stopQuestionMusic();
+  playQuizSound(type === 'victory' ? 'victorySound' : 'defeatSound', FINAL_SOUND_VOLUME);
   state.quizFinalShown = true;
   state.quizFinalType = type;
   const overlay = document.createElement('div');

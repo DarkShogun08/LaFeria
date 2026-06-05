@@ -1607,22 +1607,25 @@ textarea:focus {
 }
 
 .briefcase-lifeline-btn.is-locked {
-  filter: grayscale(0.9);
+  overflow: hidden;
+  opacity: 0.78;
+  filter: grayscale(0.65) brightness(0.8);
 }
 
 .briefcase-lifeline-btn.is-locked::after {
-  content: "\1F512";
+  content: "";
   position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: rgba(10, 10, 12, 0.92);
-  box-shadow: 0 0 0 2px rgba(255, 243, 207, 0.48);
-  font-size: 0.8rem;
+  inset: -3px;
+  z-index: 5;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 0 9px, rgba(8, 8, 10, 0.92) 9px 13px, transparent 13px 22px),
+    linear-gradient(0deg, transparent 0 18px, rgba(8, 8, 10, 0.78) 18px 22px, transparent 22px 40px);
+  box-shadow:
+    inset 0 0 0 3px rgba(8, 8, 10, 0.92),
+    inset 0 0 0 6px rgba(255, 243, 207, 0.22),
+    0 0 14px rgba(0, 0, 0, 0.45);
 }
 
 .angel-lifeline-btn {

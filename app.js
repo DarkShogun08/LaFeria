@@ -1162,7 +1162,7 @@ function updateLifelineButtonState() {
   const angelButton = $('angelLifelineBtn');
   const briefcaseButton = $('briefcaseLifelineBtn');
   const angelUnlocked = isAngelUnlocked();
-  const briefcaseUnlocked = true;
+  const briefcaseUnlocked = isBriefcaseUnlocked();
   bar?.classList.toggle('viewer-lifelines', viewerOnly);
   phoneButton?.classList.toggle('is-used', state.phoneLifelineUsed);
   rouletteButton?.classList.toggle('is-used', state.rouletteLifelineUsed);
@@ -1172,13 +1172,13 @@ function updateLifelineButtonState() {
   angelButton?.classList.toggle('is-disabled', false);
   briefcaseButton?.classList.toggle('is-used', state.briefcaseLifelineUsed);
   briefcaseButton?.classList.toggle('is-armed', state.briefcaseActive);
-  briefcaseButton?.classList.toggle('is-locked', false);
+  briefcaseButton?.classList.toggle('is-locked', !briefcaseUnlocked && !state.briefcaseLifelineUsed);
   [
     [phoneButton, false],
     [rouletteButton, false],
     [shieldButton, false],
     [angelButton, false],
-    [briefcaseButton, false],
+    [briefcaseButton, !briefcaseUnlocked],
   ].forEach(([button, disabled]) => {
     if (!button) return;
     const inactive = viewerOnly || disabled;
@@ -1674,6 +1674,10 @@ function openBriefcaseLifeline() {
     if (isBriefcaseMusicMode()) playBriefcaseMusic();
     updateBriefcasePanel();
     sendBriefcaseLifelineState();
+    return;
+  }
+  if (!isBriefcaseUnlocked()) {
+    setStatus('El maletin se desbloquea al llegar a la pregunta 12.', 'info');
     return;
   }
   if (state.currentQuestionIndex < 0) {

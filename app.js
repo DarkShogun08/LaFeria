@@ -6,8 +6,14 @@ const CREATOR_QUESTION_COUNT = 15;
 const CREATOR_QUESTION_OPTIONS = ['A', 'B', 'C', 'D'];
 const CREATOR_QUESTIONS_FALLBACK_KEY = 'laFeria_creator_questions';
 const FAIR_QUESTION_IMAGE_SRC = 'images/WhatsApp%20Image%202026-05-27%20at%2010.57.43%20(1).jpeg';
+const SPECIAL_QUESTION_TYPES = ['fair', 'antonio', 'gregorio'];
+const SPECIAL_QUESTION_IMAGES = {
+  fair: FAIR_QUESTION_IMAGE_SRC,
+  antonio: 'images/Cara%20antonio.jpeg',
+  gregorio: 'images/Cara%20Gregorio.jpg',
+};
 const SHIELD_IMAGE_SRC = 'images/Escudo.png';
-const ROULETTE_SEGMENTS = [0, 1, 2, 1, 3, 1, 2, 1, 0, 1, 2, 1, 1, 2, 3, 1];
+const ROULETTE_SEGMENTS = [0, 1, 2, 1, 3, 1, 2, 1, 0, 1, 2, 1, 2, 1, 0, 1];
 const ROULETTE_SEGMENT_DEGREES = 360 / ROULETTE_SEGMENTS.length;
 const ROULETTE_SPIN_MS = 5000;
 const REVIVE_ANIMATION_DELAY_MS = 1200;
@@ -93,8 +99,10 @@ const state = {
   musicTrackSrc: '',
   musicCurrentLevel: '',
   musicLevelPositions: { level1: 0, level2: 0, level3: 0 },
+  musicLevelQueues: { level1: [], level2: [], level3: [] },
   musicFadeInterval: null,
   musicDucked: false,
+  musicPausedForAnsweredQuestion: null,
   phoneTimerAudio: null,
   micTestStream: null,
   micTestAudioContext: null,
@@ -244,6 +252,7 @@ function emptyCreatorQuestion() {
     answers: { A: '', B: '', C: '', D: '' },
     correct: 'A',
     fairQuestion: false,
+    specialQuestion: '',
   };
 }
 
@@ -255,7 +264,10 @@ function normalizeCreatorQuestion(raw) {
     question.answers[option] = String(raw.answers?.[option] || '');
   });
   question.correct = CREATOR_QUESTION_OPTIONS.includes(raw.correct) ? raw.correct : 'A';
-  question.fairQuestion = Boolean(raw.fairQuestion);
+  question.specialQuestion = SPECIAL_QUESTION_TYPES.includes(raw.specialQuestion)
+    ? raw.specialQuestion
+    : (raw.fairQuestion ? 'fair' : '');
+  question.fairQuestion = question.specialQuestion === 'fair';
   return question;
 }
 
@@ -320,8 +332,16 @@ function renderCreatorQuestions() {
     item.innerHTML = `
       <h3>Pregunta ${index + 1}</h3>
       <label class="creator-check-row">
-        <input data-index="${index}" data-field="fairQuestion" type="checkbox" ${question.fairQuestion ? 'checked' : ''}>
+        <input data-index="${index}" data-field="specialQuestion" data-special="fair" type="checkbox" ${question.specialQuestion === 'fair' ? 'checked' : ''}>
         <span>Pregunta Feria</span>
+      </label>
+      <label class="creator-check-row">
+        <input data-index="${index}" data-field="specialQuestion" data-special="antonio" type="checkbox" ${question.specialQuestion === 'antonio' ? 'checked' : ''}>
+        <span>Pregunta Antonio</span>
+      </label>
+      <label class="creator-check-row">
+        <input data-index="${index}" data-field="specialQuestion" data-special="gregorio" type="checkbox" ${question.specialQuestion === 'gregorio' ? 'checked' : ''}>
+        <span>Pregunta Gregorio</span>
       </label>
       <label>Texto de la pregunta
         <textarea data-index="${index}" data-field="prompt" rows="2">${escapeHtml(question.prompt)}</textarea>
@@ -385,8 +405,14 @@ function updateCreatorQuestionFromInput(target) {
     if (CREATOR_QUESTION_OPTIONS.includes(option)) question.answers[option] = target.value;
   } else if (field === 'correct') {
     question.correct = CREATOR_QUESTION_OPTIONS.includes(target.value) ? target.value : 'A';
-  } else if (field === 'fairQuestion') {
-    question.fairQuestion = Boolean(target.checked);
+  } else if (field === 'specialQuestion') {
+    const special = target.dataset.special;
+    question.specialQuestion = target.checked && SPECIAL_QUESTION_TYPES.includes(special) ? special : '';
+    question.fairQuestion = question.specialQuestion === 'fair';
+    const card = target.closest('.creator-question-card');
+    card?.querySelectorAll('input[data-field="specialQuestion"]').forEach(input => {
+      input.checked = input === target && target.checked;
+    });
   }
 
   state.creatorQuestions[index] = question;
@@ -431,7 +457,9 @@ function resetQuizRound() {
   state.quizFinalType = '';
   state.quizDefeatAnnounced = false;
   state.musicLevelPositions = { level1: 0, level2: 0, level3: 0 };
+  state.musicLevelQueues = { level1: [], level2: [], level3: [] };
   state.musicDucked = false;
+  state.musicPausedForAnsweredQuestion = null;
   state.shieldArmed = false;
   state.shieldArmedQuestionIndex = null;
 }
@@ -470,15 +498,20 @@ function isSelectionPending(index = state.currentQuestionIndex) {
   return state.quizPendingSelection?.index === index;
 }
 
+function specialQuestionImageSrc(question) {
+  return SPECIAL_QUESTION_IMAGES[question.specialQuestion] || '';
+}
+
 function displayQuizQuestion(index, question, revealStep = state.quizRevealStep) {
   const safeQuestion = normalizeCreatorQuestion(question);
   const questionLine = $('quizQuestionLine');
   if (questionLine) {
     questionLine.innerHTML = '';
-    if (safeQuestion.fairQuestion && revealStep >= 0) {
+    const specialImageSrc = specialQuestionImageSrc(safeQuestion);
+    if (specialImageSrc && revealStep >= 0) {
       const image = document.createElement('img');
       image.className = 'quiz-fair-question-image';
-      image.src = FAIR_QUESTION_IMAGE_SRC;
+      image.src = specialImageSrc;
       image.alt = '';
       questionLine.appendChild(image);
     }
@@ -487,7 +520,7 @@ function displayQuizQuestion(index, question, revealStep = state.quizRevealStep)
     text.textContent = safeQuestion.prompt || `Pregunta ${index + 1}`;
     questionLine.appendChild(text);
     questionLine.classList.toggle('is-visible', revealStep >= 0);
-    questionLine.classList.toggle('has-fair-image', safeQuestion.fairQuestion && revealStep >= 0);
+    questionLine.classList.toggle('has-fair-image', Boolean(specialImageSrc) && revealStep >= 0);
   }
 
   CREATOR_QUESTION_OPTIONS.forEach(option => {
@@ -577,7 +610,8 @@ function handleDataMessage(data) {
   if (data.type === 'quiz-selection') {
     const index = Number(data.index);
     if (!Number.isInteger(index) || index < 0 || index >= CREATOR_QUESTION_COUNT) return;
-    clearQuizSuspense();
+    clearQuizSuspense(false);
+    pauseQuestionMusicForAnsweredQuestion(index);
     state.quizPendingSelection = null;
     state.quizSelectedAnswers[index] = data.option;
     state.quizResults[index] = data.result;
@@ -680,6 +714,11 @@ function handleDataMessage(data) {
   if (Array.isArray(data.quizSelectedAnswers)) state.quizSelectedAnswers = data.quizSelectedAnswers.slice(0, CREATOR_QUESTION_COUNT);
   if (Array.isArray(data.quizResults)) state.quizResults = data.quizResults.slice(0, CREATOR_QUESTION_COUNT);
   if (Array.isArray(data.quizEliminatedAnswers)) state.quizEliminatedAnswers = normalizeEliminatedAnswers(data.quizEliminatedAnswers);
+  if (state.quizResults[index]) {
+    state.musicPausedForAnsweredQuestion = index;
+  } else if (state.musicPausedForAnsweredQuestion === index) {
+    state.musicPausedForAnsweredQuestion = null;
+  }
   if (data.quizPendingSelection?.index === index && !state.quizResults[index]) {
     state.quizPendingSelection = { index, option: data.quizPendingSelection.option };
     showQuizSuspense();
@@ -860,6 +899,15 @@ function normalizeMusicManifest(manifest) {
   };
 }
 
+function shuffledMusicTracks(tracks) {
+  const queue = [...tracks];
+  for (let index = queue.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [queue[index], queue[swapIndex]] = [queue[swapIndex], queue[index]];
+  }
+  return queue;
+}
+
 async function loadMusicManifest() {
   try {
     const response = await fetch(`${MUSIC_MANIFEST_SRC}?v=${Date.now()}`, { cache: 'no-store' });
@@ -868,6 +916,7 @@ async function loadMusicManifest() {
   } catch (err) {
     state.musicManifest = DEFAULT_MUSIC_MANIFEST;
   }
+  state.musicLevelQueues = { level1: [], level2: [], level3: [] };
   syncQuestionMusic();
 }
 
@@ -881,10 +930,10 @@ function nextMusicTrackForQuestion(index) {
   const level = musicLevelForQuestion(index);
   const tracks = state.musicManifest[level] || [];
   if (!tracks.length) return '';
-  const position = state.musicLevelPositions[level] || 0;
-  const track = tracks[position % tracks.length];
-  state.musicLevelPositions[level] = position + 1;
-  return track;
+  if (!state.musicLevelQueues[level]?.length) {
+    state.musicLevelQueues[level] = shuffledMusicTracks(tracks);
+  }
+  return state.musicLevelQueues[level].shift() || '';
 }
 
 function clearMusicFade() {
@@ -937,6 +986,20 @@ function stopQuestionMusic() {
   state.musicCurrentLevel = '';
 }
 
+function pauseQuestionMusicForAnsweredQuestion(index) {
+  state.musicPausedForAnsweredQuestion = index;
+  state.musicDucked = false;
+  clearMusicFade();
+  if (state.musicAudio) {
+    try {
+      state.musicAudio.pause();
+      state.musicAudio.volume = targetMusicVolume();
+    } catch (err) {
+      console.warn('No se pudo pausar la musica de la pregunta.', err);
+    }
+  }
+}
+
 function stopBriefcaseMusic() {
   if (state.briefcaseAudio) {
     try {
@@ -977,6 +1040,13 @@ function ensureBriefcaseMusic() {
 function syncQuestionMusic() {
   if (state.currentQuestionIndex < 0) {
     stopQuestionMusic();
+    return;
+  }
+  if (state.musicPausedForAnsweredQuestion === state.currentQuestionIndex) {
+    if (state.musicAudio) {
+      clearMusicFade();
+      state.musicAudio.pause();
+    }
     return;
   }
   if (isBriefcaseMusicMode()) {
@@ -1813,7 +1883,7 @@ function resetBriefcaseLifeline() {
 
 function weightedRouletteResult() {
   const roll = Math.random();
-  if (roll < 0.1) return 0;
+  if (roll < 0.15) return 0;
   if (roll < 0.6) return 1;
   if (roll < 0.9) return 2;
   return 3;
@@ -1947,11 +2017,13 @@ function selectQuizAnswer(option) {
 }
 
 function revealQuizAnswer(index, option, result) {
-  clearQuizSuspense();
+  clearQuizSuspense(false);
   if (shieldCanSave(index, result)) {
+    restoreQuestionMusic();
     applyShieldSave(index, option, true);
     return;
   }
+  pauseQuestionMusicForAnsweredQuestion(index);
   state.quizPendingSelection = null;
   state.quizSelectedAnswers[index] = option;
   state.quizResults[index] = result;
@@ -1968,11 +2040,11 @@ function revealQuizAnswer(index, option, result) {
   checkQuizFinal();
 }
 
-function clearQuizSuspense() {
+function clearQuizSuspense(restoreMusic = true) {
   if (state.quizRevealTimeout) clearTimeout(state.quizRevealTimeout);
   state.quizRevealTimeout = null;
   document.querySelectorAll('.quiz-suspense-overlay').forEach(item => item.remove());
-  restoreQuestionMusic();
+  if (restoreMusic) restoreQuestionMusic();
 }
 
 function showQuizSuspense() {

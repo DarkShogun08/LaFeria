@@ -2030,21 +2030,21 @@ textarea:focus {
     conic-gradient(
       from -11.25deg,
       #111 0deg 22.5deg,
-      #d1122b 22.5deg 45deg,
+      #ffd43d 22.5deg 45deg,
       #245ad8 45deg 67.5deg,
-      #d69d00 67.5deg 90deg,
+      #ffd43d 67.5deg 90deg,
       #1c7d2a 90deg 112.5deg,
-      #d1122b 112.5deg 135deg,
+      #ffd43d 112.5deg 135deg,
       #245ad8 135deg 157.5deg,
-      #d69d00 157.5deg 180deg,
+      #ffd43d 157.5deg 180deg,
       #111 180deg 202.5deg,
-      #d1122b 202.5deg 225deg,
+      #ffd43d 202.5deg 225deg,
       #245ad8 225deg 247.5deg,
-      #d69d00 247.5deg 270deg,
-      #d1122b 270deg 292.5deg,
-      #245ad8 292.5deg 315deg,
-      #1c7d2a 315deg 337.5deg,
-      #d69d00 337.5deg 360deg
+      #ffd43d 247.5deg 270deg,
+      #245ad8 270deg 292.5deg,
+      #ffd43d 292.5deg 315deg,
+      #111 315deg 337.5deg,
+      #ffd43d 337.5deg 360deg
     );
   box-shadow:
     inset 0 0 0 7px rgba(255, 255, 255, 0.08),
@@ -2092,6 +2092,31 @@ textarea:focus {
     rotate(var(--angle))
     translateY(calc(var(--roulette-radius) * -1))
     rotate(calc(var(--angle) * -1));
+}
+
+.roulette-wheel .roulette-value-0 {
+  background: #080808;
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #fff;
+}
+
+.roulette-wheel .roulette-value-1 {
+  background: #ffd43d;
+  border-color: rgba(255, 246, 172, 0.9);
+  color: #111;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.35);
+}
+
+.roulette-wheel .roulette-value-2 {
+  background: #245ad8;
+  border-color: rgba(188, 215, 255, 0.85);
+  color: #fff;
+}
+
+.roulette-wheel .roulette-value-3 {
+  background: #1c7d2a;
+  border-color: rgba(194, 255, 207, 0.85);
+  color: #fff;
 }
 
 .roulette-wheel strong {

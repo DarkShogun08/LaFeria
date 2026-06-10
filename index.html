@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>La Feria - Llamadas</title>
-  <link rel="stylesheet" href="styles.css?v=lifelines-34">
+  <link rel="stylesheet" href="styles.css?v=lifelines-40">
 </head>
 <body>
   <main class="screen" id="menuScreen">
@@ -279,10 +279,10 @@
         <div class="roulette-card" role="dialog" aria-modal="true" aria-label="Comodin de ruleta">
           <button class="roulette-close" type="button" aria-label="Cerrar comodin de ruleta" onclick="closeRouletteLifeline()">&times;</button>
           <div class="roulette-wheel" id="rouletteWheel" aria-live="polite">
-            <span style="--angle: 0deg">0</span><span style="--angle: 22.5deg">1</span><span style="--angle: 45deg">2</span><span style="--angle: 67.5deg">1</span>
-            <span style="--angle: 90deg">3</span><span style="--angle: 112.5deg">1</span><span style="--angle: 135deg">2</span><span style="--angle: 157.5deg">1</span>
-            <span style="--angle: 180deg">0</span><span style="--angle: 202.5deg">1</span><span style="--angle: 225deg">2</span><span style="--angle: 247.5deg">1</span>
-            <span style="--angle: 270deg">1</span><span style="--angle: 292.5deg">2</span><span style="--angle: 315deg">3</span><span style="--angle: 337.5deg">1</span>
+            <span class="roulette-value-0" style="--angle: 0deg">0</span><span class="roulette-value-1" style="--angle: 22.5deg">1</span><span class="roulette-value-2" style="--angle: 45deg">2</span><span class="roulette-value-1" style="--angle: 67.5deg">1</span>
+            <span class="roulette-value-3" style="--angle: 90deg">3</span><span class="roulette-value-1" style="--angle: 112.5deg">1</span><span class="roulette-value-2" style="--angle: 135deg">2</span><span class="roulette-value-1" style="--angle: 157.5deg">1</span>
+            <span class="roulette-value-0" style="--angle: 180deg">0</span><span class="roulette-value-1" style="--angle: 202.5deg">1</span><span class="roulette-value-2" style="--angle: 225deg">2</span><span class="roulette-value-1" style="--angle: 247.5deg">1</span>
+            <span class="roulette-value-2" style="--angle: 270deg">2</span><span class="roulette-value-1" style="--angle: 292.5deg">1</span><span class="roulette-value-0" style="--angle: 315deg">0</span><span class="roulette-value-1" style="--angle: 337.5deg">1</span>
             <strong id="rouletteResult">?</strong>
           </div>
           <p class="roulette-copy" id="rouletteCopy">Gira para eliminar respuestas incorrectas visibles.</p>
@@ -374,6 +374,6 @@
   </section>
 
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
-  <script src="app.js?v=lifelines-34"></script>
+  <script src="app.js?v=lifelines-40"></script>
 </body>
 </html>
